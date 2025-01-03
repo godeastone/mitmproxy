@@ -6,7 +6,7 @@ ENV LANGUAGE en_US.UTF-8
 ENV TERM screen-256color
 
 # install mitmproxy, asciinema, and dependencies
-RUN apt-get update && apt-get install --no-install-recommends -y \
+RUN apt-get update && apt-get install -y \
     asciinema \
     autoconf \
     automake \
@@ -23,21 +23,17 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     pkg-config \
     python3-pip \
     python3 \
-    python3-setuptools \
     wget \
     xterm \
     && locale-gen --purge "en_US.UTF-8" \
     && update-locale "LANG=en_US.UTF-8" \
-    && pip3 install --no-cache-dir libtmux curl requests mitmproxy \
-    && rm -rf /var/lib/apt/lists/*
+    && pip3 install libtmux curl requests mitmproxy
 
 # install latest tmux (to support popups)
-RUN git clone --depth 1 https://github.com/tmux/tmux.git \
+RUN git clone https://github.com/tmux/tmux.git \
     && cd tmux \
     && sh autogen.sh \
-    && ./configure && make && make install \
-    && cd ../ \
-    && rm -rf tmux
+    && ./configure && make && make install
 
 WORKDIR /root/clidirector
 

@@ -25,6 +25,7 @@ are treated exactly like mitmproxy's own. This means that addons can also be
 configured through the central configuration file, and their options will appear
 in the options editors in interactive tools.
 
+
 ## Tools
 
 Both **mitmproxy** and **mitmweb** have built-in editors that let you view and
@@ -34,11 +35,8 @@ persistent by saving the settings out to a YAML configuration file (please see
 the specific tool's interactive help for details on how to do this).
 
 For all tools, options can be set directly by name using the `--set`
-command-line option. Please see the command-line help (`--help`) for usage. Example:
-```
-mitmproxy --set anticomp=true
-mitmweb --set ignore_hosts=example.com --set ignore_hosts=example.org 
-```
+command-line option. Please see the command-line help (`--help`) for usage.
+
 
 ## Available Options
 

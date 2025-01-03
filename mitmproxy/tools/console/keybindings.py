@@ -1,18 +1,20 @@
-import textwrap
-
 import urwid
-
+import blinker
+import textwrap
 from mitmproxy.tools.console import layoutwidget
 from mitmproxy.tools.console import signals
-from mitmproxy.utils import signals as utils_signals
 
 HELP_HEIGHT = 5
+
+
+keybinding_focus_change = blinker.Signal()
 
 
 class KeyItem(urwid.WidgetWrap):
     def __init__(self, walker, binding, focused):
         self.walker, self.binding, self.focused = walker, binding, focused
-        super().__init__(self.get_widget())
+        super().__init__(None)
+        self._w = self.get_widget()
 
     def get_widget(self):
         cmd = textwrap.dedent(self.binding.command).strip()
@@ -35,8 +37,7 @@ class KeyItem(urwid.WidgetWrap):
 
 
 class KeyListWalker(urwid.ListWalker):
-    def __init__(self, master, keybinding_focus_change):
-        self.keybinding_focus_change = keybinding_focus_change
+    def __init__(self, master):
         self.master = master
 
         self.index = 0
@@ -45,7 +46,7 @@ class KeyListWalker(urwid.ListWalker):
         self.set_focus(0)
         signals.keybindings_change.connect(self.sig_modified)
 
-    def sig_modified(self):
+    def sig_modified(self, sender):
         self.bindings = list(self.master.keymap.list("all"))
         self.set_focus(min(self.index, len(self.bindings) - 1))
         self._modified()
@@ -64,8 +65,7 @@ class KeyListWalker(urwid.ListWalker):
         binding = self.bindings[index]
         self.index = index
         self.focus_obj = self._get(self.index)
-        self.keybinding_focus_change.send(binding.help or "")
-        self._modified()
+        keybinding_focus_change.send(binding.help or "")
 
     def get_next(self, pos):
         if pos >= len(self.bindings) - 1:
@@ -79,17 +79,11 @@ class KeyListWalker(urwid.ListWalker):
             return None, None
         return self._get(pos), pos
 
-    def positions(self, reverse=False):
-        if reverse:
-            return reversed(range(len(self.bindings)))
-        else:
-            return range(len(self.bindings))
-
 
 class KeyList(urwid.ListBox):
-    def __init__(self, master, keybinding_focus_change):
+    def __init__(self, master):
         self.master = master
-        self.walker = KeyListWalker(master, keybinding_focus_change)
+        self.walker = KeyListWalker(master)
         super().__init__(self.walker)
 
     def keypress(self, size, key):
@@ -106,7 +100,7 @@ class KeyList(urwid.ListBox):
 
 
 class KeyHelp(urwid.Frame):
-    def __init__(self, master, keybinding_focus_change):
+    def __init__(self, master):
         self.master = master
         super().__init__(self.widget(""))
         self.set_active(False)
@@ -115,28 +109,27 @@ class KeyHelp(urwid.Frame):
     def set_active(self, val):
         h = urwid.Text("Key Binding Help")
         style = "heading" if val else "heading_inactive"
-        self.header = urwid.AttrMap(h, style)
+        self.header = urwid.AttrWrap(h, style)
 
     def widget(self, txt):
         cols, _ = self.master.ui.get_cols_rows()
-        return urwid.ListBox([urwid.Text(i) for i in textwrap.wrap(txt, cols)])
+        return urwid.ListBox(
+            [urwid.Text(i) for i in textwrap.wrap(txt, cols)]
+        )
 
     def sig_mod(self, txt):
-        self.body = self.widget(txt)
+        self.set_body(self.widget(txt))
 
 
 class KeyBindings(urwid.Pile, layoutwidget.LayoutWidget):
     title = "Key Bindings"
     keyctx = "keybindings"
-    focus_position: int
 
     def __init__(self, master):
-        keybinding_focus_change = utils_signals.SyncSignal(lambda text: None)
-
-        oh = KeyHelp(master, keybinding_focus_change)
+        oh = KeyHelp(master)
         super().__init__(
             [
-                KeyList(master, keybinding_focus_change),
+                KeyList(master),
                 (HELP_HEIGHT, oh),
             ]
         )
@@ -145,19 +138,22 @@ class KeyBindings(urwid.Pile, layoutwidget.LayoutWidget):
     def get_focused_binding(self):
         if self.focus_position != 0:
             return None
-        f = self.contents[0][0]
+        f = self.widget_list[0]
         return f.walker.get_focus()[0].binding
 
     def keypress(self, size, key):
         if key == "m_next":
-            self.focus_position = (self.focus_position + 1) % len(self.widget_list)
-            self.contents[1][0].set_active(self.focus_position == 1)
+            self.focus_position = (
+                self.focus_position + 1
+            ) % len(self.widget_list)
+            self.widget_list[1].set_active(self.focus_position == 1)
             key = None
 
         # This is essentially a copypasta from urwid.Pile's keypress handler.
         # So much for "closed for modification, but open for extension".
         item_rows = None
         if len(size) == 2:
-            item_rows = self.get_item_rows(size, focus=True)
-        tsize = self.get_item_size(size, self.focus_position, True, item_rows)
-        return self.focus.keypress(tsize, key)
+            item_rows = self.get_item_rows(size, focus = True)
+        i = self.widget_list.index(self.focus_item)
+        tsize = self.get_item_size(size, i, True, item_rows)
+        return self.focus_item.keypress(tsize, key)

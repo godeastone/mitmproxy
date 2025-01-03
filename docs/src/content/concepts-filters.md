@@ -18,6 +18,7 @@ expressions consist of the following operators:
 - Strings with no operators are matched against the request URL.
 - The default binary operator is &.
 
+
 ## View flow selectors
 
 In interactive contexts, mitmproxy has a set of convenient flow selectors that
@@ -33,6 +34,7 @@ operate on the current view:
 </tbody></table>
 
 These are frequently used in commands and key bindings.
+
 
 ## Examples
 
@@ -50,4 +52,5 @@ Anything but requests with a text/html content type:
 
 Replace entire GET string in a request (quotes required to make it work):
 
-    ":~q ~m GET:.*:/replacement.html"
+   ":~q ~m GET:.*:/replacement.html"
+   

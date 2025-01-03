@@ -1,5 +1,4 @@
 import pytest
-
 from mitmproxy.coretypes import bidi
 
 

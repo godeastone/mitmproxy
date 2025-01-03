@@ -7,10 +7,12 @@ coverage:
         target: auto
         threshold: 0.1%
         paths:
-          - "mitmproxy/"
-          - "examples/addons/"
+          - "!web/"
       web:
         target: auto
         threshold: 0.1%
         paths:
           - "web/"
+codecov:
+  notify:
+    after_n_builds: 7

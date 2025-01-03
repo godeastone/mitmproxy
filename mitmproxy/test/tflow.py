@@ -1,205 +1,139 @@
+import io
 import uuid
+
+from mitmproxy.test import tutils
+from mitmproxy import tcp
+from mitmproxy import websocket
+from mitmproxy import controller
+from mitmproxy import http
+from mitmproxy import connections
+from mitmproxy import flow
+from mitmproxy.net import http as net_http
 
 from wsproto.frame_protocol import Opcode
 
-from mitmproxy import connection
-from mitmproxy import dns
-from mitmproxy import flow
-from mitmproxy import http
-from mitmproxy import tcp
-from mitmproxy import udp
-from mitmproxy import websocket
-from mitmproxy.connection import ConnectionState
-from mitmproxy.proxy.mode_specs import ProxyMode
-from mitmproxy.test.tutils import tdnsreq
-from mitmproxy.test.tutils import tdnsresp
-from mitmproxy.test.tutils import treq
-from mitmproxy.test.tutils import tresp
 
-
-def ttcpflow(
-    client_conn=True, server_conn=True, messages=True, err=None
-) -> tcp.TCPFlow:
+def ttcpflow(client_conn=True, server_conn=True, messages=True, err=None):
     if client_conn is True:
         client_conn = tclient_conn()
     if server_conn is True:
         server_conn = tserver_conn()
     if messages is True:
         messages = [
-            tcp.TCPMessage(True, b"hello", 946681204.2),
-            tcp.TCPMessage(False, b"it's me", 946681204.5),
+            tcp.TCPMessage(True, b"hello"),
+            tcp.TCPMessage(False, b"it's me"),
         ]
     if err is True:
         err = terr()
 
     f = tcp.TCPFlow(client_conn, server_conn)
-    f.timestamp_created = client_conn.timestamp_start
     f.messages = messages
     f.error = err
-    f.live = True
+    f.reply = controller.DummyReply()
     return f
 
 
-def tudpflow(
-    client_conn=True, server_conn=True, messages=True, err=None
-) -> udp.UDPFlow:
+def twebsocketflow(client_conn=True, server_conn=True, messages=True, err=None, handshake_flow=True):
+
     if client_conn is True:
         client_conn = tclient_conn()
     if server_conn is True:
         server_conn = tserver_conn()
+    if handshake_flow is True:
+        req = http.HTTPRequest(
+            "example.com",
+            80,
+            b"GET",
+            b"http",
+            b"example.com",
+            b"/ws",
+            b"HTTP/1.1",
+            headers=net_http.Headers(
+                connection="upgrade",
+                upgrade="websocket",
+                sec_websocket_version="13",
+                sec_websocket_key="1234",
+            ),
+            content=b'',
+            trailers=None,
+            timestamp_start=946681200,
+            timestamp_end=946681201,
+
+        )
+        resp = http.HTTPResponse(
+            b"HTTP/1.1",
+            101,
+            reason=net_http.status_codes.RESPONSES.get(101),
+            headers=net_http.Headers(
+                connection='upgrade',
+                upgrade='websocket',
+                sec_websocket_accept=b'',
+            ),
+            content=b'',
+            trailers=None,
+            timestamp_start=946681202,
+            timestamp_end=946681203,
+        )
+        handshake_flow = http.HTTPFlow(client_conn, server_conn)
+        handshake_flow.request = req
+        handshake_flow.response = resp
+
+    f = websocket.WebSocketFlow(client_conn, server_conn, handshake_flow)
+    f.metadata['websocket_handshake'] = handshake_flow.id
+    handshake_flow.metadata['websocket_flow'] = f.id
+    handshake_flow.metadata['websocket'] = True
+
     if messages is True:
         messages = [
-            udp.UDPMessage(True, b"hello", 946681204.2),
-            udp.UDPMessage(False, b"it's me", 946681204.5),
+            websocket.WebSocketMessage(Opcode.BINARY, True, b"hello binary"),
+            websocket.WebSocketMessage(Opcode.TEXT, True, b"hello text"),
+            websocket.WebSocketMessage(Opcode.TEXT, False, b"it's me"),
         ]
     if err is True:
         err = terr()
 
-    f = udp.UDPFlow(client_conn, server_conn)
-    f.timestamp_created = client_conn.timestamp_start
     f.messages = messages
     f.error = err
-    f.live = True
+    f.reply = controller.DummyReply()
     return f
 
 
-def twebsocketflow(
-    messages=True, err=None, close_code=None, close_reason=""
-) -> http.HTTPFlow:
-    flow = http.HTTPFlow(tclient_conn(), tserver_conn())
-    flow.request = http.Request(
-        "example.com",
-        80,
-        b"GET",
-        b"http",
-        b"example.com",
-        b"/ws",
-        b"HTTP/1.1",
-        headers=http.Headers(
-            connection="upgrade",
-            upgrade="websocket",
-            sec_websocket_version="13",
-            sec_websocket_key="1234",
-        ),
-        content=b"",
-        trailers=None,
-        timestamp_start=946681200,
-        timestamp_end=946681201,
-    )
-    flow.response = http.Response(
-        b"HTTP/1.1",
-        101,
-        reason=b"Switching Protocols",
-        headers=http.Headers(
-            connection="upgrade",
-            upgrade="websocket",
-            sec_websocket_accept=b"",
-        ),
-        content=b"",
-        trailers=None,
-        timestamp_start=946681202,
-        timestamp_end=946681203,
-    )
-
-    flow.websocket = twebsocket()
-
-    flow.websocket.close_reason = close_reason
-
-    if close_code is not None:
-        flow.websocket.close_code = close_code
-    else:
-        if err is True:
-            # ABNORMAL_CLOSURE
-            flow.websocket.close_code = 1006
-        else:
-            # NORMAL_CLOSURE
-            flow.websocket.close_code = 1000
-
-    flow.live = True
-    return flow
-
-
-def tdnsflow(
-    *,
-    client_conn: connection.Client | None = None,
-    server_conn: connection.Server | None = None,
-    req: dns.Message | None = None,
-    resp: bool | dns.Message = False,
-    err: bool | flow.Error = False,
-    live: bool = True,
-) -> dns.DNSFlow:
-    """Create a DNS flow for testing."""
-    if client_conn is None:
+def tflow(client_conn=True, server_conn=True, req=True, resp=None, err=None):
+    """
+    @type client_conn: bool | None | mitmproxy.proxy.connection.ClientConnection
+    @type server_conn: bool | None | mitmproxy.proxy.connection.ServerConnection
+    @type req:         bool | None | mitmproxy.proxy.protocol.http.HTTPRequest
+    @type resp:        bool | None | mitmproxy.proxy.protocol.http.HTTPResponse
+    @type err:         bool | None | mitmproxy.proxy.protocol.primitives.Error
+    @return:           mitmproxy.proxy.protocol.http.HTTPFlow
+    """
+    if client_conn is True:
         client_conn = tclient_conn()
-        client_conn.proxy_mode = ProxyMode.parse("dns")
-        client_conn.transport_protocol = "udp"
-    if server_conn is None:
+    if server_conn is True:
         server_conn = tserver_conn()
-        server_conn.transport_protocol = "udp"
-    if req is None:
-        req = tdnsreq()
-
+    if req is True:
+        req = tutils.treq()
     if resp is True:
-        resp = tdnsresp()
+        resp = tutils.tresp()
     if err is True:
         err = terr()
-
-    assert resp is False or isinstance(resp, dns.Message)
-    assert err is False or isinstance(err, flow.Error)
-
-    f = dns.DNSFlow(client_conn, server_conn)
-    f.timestamp_created = req.timestamp
-    f.request = req
-    f.response = resp or None
-    f.error = err or None
-    f.live = live
-    return f
-
-
-def tflow(
-    *,
-    client_conn: connection.Client | None = None,
-    server_conn: connection.Server | None = None,
-    req: http.Request | None = None,
-    resp: bool | http.Response = False,
-    err: bool | flow.Error = False,
-    ws: bool | websocket.WebSocketData = False,
-    live: bool = True,
-) -> http.HTTPFlow:
-    """Create a flow for testing."""
-    if client_conn is None:
-        client_conn = tclient_conn()
-    if server_conn is None:
-        server_conn = tserver_conn()
-    if req is None:
-        req = treq()
-
-    if resp is True:
-        resp = tresp()
-    if err is True:
-        err = terr()
-    if ws is True:
-        ws = twebsocket()
-
-    assert resp is False or isinstance(resp, http.Response)
-    assert err is False or isinstance(err, flow.Error)
-    assert ws is False or isinstance(ws, websocket.WebSocketData)
 
     f = http.HTTPFlow(client_conn, server_conn)
-    f.timestamp_created = req.timestamp_start
     f.request = req
-    f.response = resp or None
-    f.error = err or None
-    f.websocket = ws or None
-    f.live = live
+    f.response = resp
+    f.error = err
+    f.reply = controller.DummyReply()
     return f
 
 
 class DummyFlow(flow.Flow):
     """A flow that is neither HTTP nor TCP."""
 
+    def __init__(self, client_conn, server_conn, live=None):
+        super().__init__("dummy", client_conn, server_conn, live)
 
-def tdummyflow(client_conn=True, server_conn=True, err=None) -> DummyFlow:
+
+def tdummyflow(client_conn=True, server_conn=True, err=None):
     if client_conn is True:
         client_conn = tclient_conn()
     if server_conn is True:
@@ -209,90 +143,64 @@ def tdummyflow(client_conn=True, server_conn=True, err=None) -> DummyFlow:
 
     f = DummyFlow(client_conn, server_conn)
     f.error = err
-    f.live = True
+    f.reply = controller.DummyReply()
     return f
 
 
-def tclient_conn() -> connection.Client:
-    c = connection.Client(
+def tclient_conn():
+    """
+    @return: mitmproxy.proxy.connection.ClientConnection
+    """
+    c = connections.ClientConnection.from_state(dict(
         id=str(uuid.uuid4()),
-        peername=("127.0.0.1", 22),
-        sockname=("", 0),
+        address=("127.0.0.1", 22),
+        clientcert=None,
         mitmcert=None,
+        tls_established=False,
         timestamp_start=946681200,
         timestamp_tls_setup=946681201,
         timestamp_end=946681206,
         sni="address",
-        cipher="cipher",
-        alpn=b"http/1.1",
+        cipher_name="cipher",
+        alpn_proto_negotiated=b"http/1.1",
         tls_version="TLSv1.2",
-        state=ConnectionState.OPEN,
-        error=None,
-        tls=False,
-        certificate_list=[],
-        alpn_offers=[],
-        cipher_list=[],
-        proxy_mode=ProxyMode.parse("regular"),
-    )
+        tls_extensions=[(0x00, bytes.fromhex("000e00000b6578616d"))],
+    ))
+    c.reply = controller.DummyReply()
+    c.rfile = io.BytesIO()
+    c.wfile = io.BytesIO()
     return c
 
 
-def tserver_conn() -> connection.Server:
-    c = connection.Server(
+def tserver_conn():
+    """
+    @return: mitmproxy.proxy.connection.ServerConnection
+    """
+    c = connections.ServerConnection.from_state(dict(
         id=str(uuid.uuid4()),
         address=("address", 22),
-        peername=("192.168.0.1", 22),
-        sockname=("address", 22),
+        source_address=("address", 22),
+        ip_address=("192.168.0.1", 22),
+        cert=None,
         timestamp_start=946681202,
         timestamp_tcp_setup=946681203,
         timestamp_tls_setup=946681204,
         timestamp_end=946681205,
+        tls_established=False,
         sni="address",
-        alpn=None,
+        alpn_proto_negotiated=None,
         tls_version="TLSv1.2",
         via=None,
-        state=ConnectionState.CLOSED,
-        error=None,
-        tls=False,
-        certificate_list=[],
-        alpn_offers=[],
-        cipher=None,
-        cipher_list=[],
-    )
+    ))
+    c.reply = controller.DummyReply()
+    c.rfile = io.BytesIO()
+    c.wfile = io.BytesIO()
     return c
 
 
-def terr(content: str = "error") -> flow.Error:
-    err = flow.Error(content, 946681207)
+def terr(content="error"):
+    """
+    @return: mitmproxy.proxy.protocol.primitives.Error
+    """
+    err = flow.Error(content)
     return err
-
-
-def twebsocket(messages: bool = True) -> websocket.WebSocketData:
-    ws = websocket.WebSocketData()
-
-    if messages:
-        ws.messages = [
-            websocket.WebSocketMessage(Opcode.BINARY, True, b"hello binary", 946681203),
-            websocket.WebSocketMessage(Opcode.TEXT, True, b"hello text", 946681204),
-            websocket.WebSocketMessage(Opcode.TEXT, False, b"it's me", 946681205),
-        ]
-    ws.close_reason = "Close Reason"
-    ws.close_code = 1000
-    ws.closed_by_client = False
-    ws.timestamp_end = 946681205
-
-    return ws
-
-
-def tflows() -> list[flow.Flow]:
-    return [
-        tflow(resp=True),
-        tflow(err=True),
-        tflow(ws=True),
-        ttcpflow(),
-        ttcpflow(err=True),
-        tudpflow(),
-        tudpflow(err=True),
-        tdnsflow(resp=True),
-        tdnsflow(err=True),
-    ]

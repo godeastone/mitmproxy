@@ -39,7 +39,7 @@
     </ol>
     <h5>Automated Installation</h5>
     <ol>
-        <li>Run <code>certutil.exe -addstore root mitmproxy-ca-cert.cer</code>
+        <li>Run <code>certutil.exe -importpfx Root mitmproxy-ca-cert.p12</code>
             (<a href="https://technet.microsoft.com/en-us/library/cc732443.aspx">details</a>).
         </li>
     </ol>
@@ -50,35 +50,24 @@
         <li><code>mv mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt</code></li>
         <li><code>sudo update-ca-certificates</code></li>
     </ol>
-    <h5>Fedora</h5>
-    <ol>
-        <li><code>mv mitmproxy-ca-cert.pem /etc/pki/ca-trust/source/anchors/</code></li>
-        <li><code>sudo update-ca-trust</code></li>
-    </ol>
-    <h5>Arch Linux</h5>
-    <ol>
-        <code>sudo trust anchor --store mitmproxy-ca-cert.pem</code>
-    </ol>
     {% endcall %}
     {% call entry('macOS', 'apple') %}
-    <h5>Manual Installation</h5>
     <ol>
         <li>Double-click the PEM file to open the <samp>Keychain Access</samp> application.</li>
         <li>Locate the new certificate "mitmproxy" in the list and double-click it.</li>
         <li>Change <samp>Secure Socket Layer (SSL)</samp> to <samp>Always Trust</samp>.</li>
         <li>Close the dialog window and enter your password if prompted.</li>
     </ol>
-    <h5>Automated Installation</h5>
-    <ol>
-        <li><code>sudo security add-trusted-cert -d -p ssl -p basic -k /Library/Keychains/System.keychain mitmproxy-ca-cert.pem</code></li>
-    </ol>
     {% endcall %}
     {% call entry('iOS <small>– please read the instructions!</small>', 'apple') %}
     <h5>iOS 13+</h5>
     <ol>
         <li>Use Safari to download the certificate. Other browsers may not open the proper installation prompt.</li>
-        <li>Install the new Profile (<samp>Settings -> General -> VPN & Device Management</samp>).</li>
-        <li><span class="text-danger"><strong>Important:</strong> Go to <samp>Settings -> General -> About -> Certificate Trust Settings</samp>.
+        <li>Install the new Profile and activate it (<samp>Settings -> General</samp> ->
+            <samp>Profile</samp>).
+        </li>
+        <li><span class="text-danger"><strong>Important: </strong> Goto
+            <samp>Settings -> General -> About -> Certificate Trust Settings</samp>.
             Toggle <samp>mitmproxy</samp> to <samp>ON</samp>.</span></li>
     </ol>
     {% endcall %}
@@ -92,18 +81,14 @@
     </ol>
 
     <p>Some Android distributions require you to install the certificate via <samp>Settings -> Security -> Advanced ->
-        Encryption and credentials -> Install a certificate -> CA certificate</samp> (or similar) instead.</p>
+        Encryption and credentials -> Install from storage</samp> instead.</p>
 
     <div class="alert alert-warning" role="alert">
         <p><strong>Warning: </strong>Apps that target Android API Level 24 (introduced in 2016) and above only accept
             certificates from the system trust store
             (<a href="https://github.com/mitmproxy/mitmproxy/issues/2054">#2054</a>).
             User-added CAs are not accepted unless the application manually opts in. Except for browsers, you need to
-            patch most apps manually
-            (<a href="https://developer.android.com/training/articles/security-config">Android network security config</a>).
-        </p>
-        <p>
-          Alternatively, if you have rooted the device and have Magisk installed, you can install <a href="/cert/magisk">this Magisk module</a> via the Magisk Manager app.
+            patch most apps manually.
         </p>
     </div>
     {% endcall %}

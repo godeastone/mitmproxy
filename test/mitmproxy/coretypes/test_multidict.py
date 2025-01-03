@@ -16,7 +16,11 @@ class TMultiDict(_TMulti, multidict.MultiDict):
 class TestMultiDict:
     @staticmethod
     def _multi():
-        return TMultiDict((("foo", "bar"), ("bar", "baz"), ("Bar", "bam")))
+        return TMultiDict((
+            ("foo", "bar"),
+            ("bar", "baz"),
+            ("Bar", "bam")
+        ))
 
     def test_init(self):
         md = TMultiDict()
@@ -40,7 +44,9 @@ class TestMultiDict:
         with pytest.raises(KeyError):
             assert md["bar"]
 
-        md_multi = TMultiDict([("foo", "a"), ("foo", "b")])
+        md_multi = TMultiDict(
+            [("foo", "a"), ("foo", "b")]
+        )
         assert md_multi["foo"] == "a"
 
     def test_setitem(self):
@@ -107,15 +113,13 @@ class TestMultiDict:
         md.set_all("foo", ["bar", "baz"])
         assert md.fields == (("foo", "bar"), ("foo", "baz"))
 
-        md = TMultiDict(
-            (
-                ("a", "b"),
-                ("x", "x"),
-                ("c", "d"),
-                ("X", "X"),
-                ("e", "f"),
-            )
-        )
+        md = TMultiDict((
+            ("a", "b"),
+            ("x", "x"),
+            ("c", "d"),
+            ("X", "X"),
+            ("e", "f"),
+        ))
         md.set_all("x", ["1", "2", "3"])
         assert md.fields == (
             ("a", "b"),
@@ -140,7 +144,7 @@ class TestMultiDict:
             ("foo", "bar"),
             ("bar", "baz"),
             ("Bar", "bam"),
-            ("foo", "foo"),
+            ("foo", "foo")
         )
 
     def test_insert(self):
@@ -162,11 +166,7 @@ class TestMultiDict:
     def test_items(self):
         md = self._multi()
         assert list(md.items()) == [("foo", "bar"), ("bar", "baz")]
-        assert list(md.items(multi=True)) == [
-            ("foo", "bar"),
-            ("bar", "baz"),
-            ("Bar", "bam"),
-        ]
+        assert list(md.items(multi=True)) == [("foo", "bar"), ("bar", "baz"), ("Bar", "bam")]
 
     def test_state(self):
         md = self._multi()

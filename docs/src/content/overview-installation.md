@@ -34,25 +34,25 @@ the repository maintainers directly for issues with native packages.
 
 ## Windows
 
-To install mitmproxy on Windows, download the installer from [mitmproxy.org](https://mitmproxy.org/). 
-We also provide standalone binaries, they take significantly longer to start
-as some files need to be extracted to temporary directories first.
-After installation, mitmproxy, mitmdump and mitmweb are also added to your PATH and can be invoked from the command line.
+All the mitmproxy tools are fully supported under [WSL (Windows Subsystem for
+Linux)](https://docs.microsoft.com/en-us/windows/wsl/about). We recommend to
+[install WSL](https://docs.microsoft.com/en-us/windows/wsl/install-win10), and
+then follow the mitmproxy installation instructions for Linux.
 
-We highly recommend to [install Windows Terminal](https://aka.ms/terminal) to improve the rendering of the console interface.
-
-All the mitmproxy tools are also supported under
-[WSL (Windows Subsystem for Linux)](https://docs.microsoft.com/en-us/windows/wsl/about). After
-[installing WSL](https://docs.microsoft.com/en-us/windows/wsl/install-win10), follow the mitmproxy installation
-instructions for Linux.
+We also distribute native Windows packages for all tools other than the
+mitmproxy console app, which only works under WSL. To install mitmproxy on
+Windows, download the installer from [mitmproxy.org](https://mitmproxy.org/).
+After installation, you'll find shortcuts for mitmweb and mitmdump in the start
+menu. Both executables are added to your PATH and can be invoked from the
+command line.
 
 ## Advanced Installation
 
 ### Development Setup
 
 If you would like to install mitmproxy directly from source code or the
-GitHub main branch, please see the our
-[CONTRIBUTING.md](https://github.com/mitmproxy/mitmproxy/blob/main/CONTRIBUTING.md)
+GitHub master branch, please see the our
+[README](https://github.com/mitmproxy/mitmproxy#installation)
 on GitHub.
 
 ### Installation from the Python Package Index (PyPI)
@@ -66,7 +66,7 @@ While there are plenty of options around[^1], we recommend the installation usin
     packages. Most of them (pip, virtualenv, pipenv, etc.) should just work, but we don't have the capacity to
     provide support for it.
 
-1. Install a recent version of Python (we require at least 3.10).
+1. Install a recent version of Python (we require at least 3.6).
 2. Install [pipx](https://pipxproject.github.io/pipx/).
 3. `pipx install mitmproxy`
 
@@ -80,8 +80,9 @@ You can use the official mitmproxy images from
 ### Security Considerations for Binary Packages
 
 Our pre-compiled binary packages and Docker images include a self-contained
-Python 3 environment, a recent version of OpenSSL, and other dependencies
-that would otherwise be cumbersome to compile and install.
+Python 3 environment,  a recent version of OpenSSL that support ALPN and HTTP/2,
+and other dependencies that would otherwise be cumbersome to compile and
+install.
 
 Dependencies in the binary packages are frozen on release, and can't be updated
 in situ. This means that we necessarily capture any bugs or security issues that

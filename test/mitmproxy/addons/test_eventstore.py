@@ -1,62 +1,47 @@
-import asyncio
-import logging
-
+from unittest import mock
+from mitmproxy import log
 from mitmproxy.addons import eventstore
 
 
-async def test_simple():
+def test_simple():
     store = eventstore.EventStore()
     assert not store.data
 
-    sig_add_called = False
-    sig_refresh_called = False
-
-    def sig_add(entry):
-        nonlocal sig_add_called
-        sig_add_called = True
-
-    def sig_refresh():
-        nonlocal sig_refresh_called
-        sig_refresh_called = True
-
+    sig_add = mock.Mock(spec=lambda: 42)
+    sig_refresh = mock.Mock(spec=lambda: 42)
     store.sig_add.connect(sig_add)
     store.sig_refresh.connect(sig_refresh)
 
-    assert not sig_add_called
-    assert not sig_refresh_called
+    assert not sig_add.called
+    assert not sig_refresh.called
 
     # test .log()
-    logging.error("test")
-    await asyncio.sleep(0)
+    store.log(log.LogEntry("test", "info"))
     assert store.data
 
-    assert sig_add_called
-    assert not sig_refresh_called
+    assert sig_add.called
+    assert not sig_refresh.called
 
     # test .clear()
-    sig_add_called = False
+    sig_add.reset_mock()
 
     store.clear()
     assert not store.data
 
-    assert not sig_add_called
-    assert sig_refresh_called
-    store.done()
+    assert not sig_add.called
+    assert sig_refresh.called
 
 
-async def test_max_size():
+def test_max_size():
     store = eventstore.EventStore(3)
     assert store.size == 3
-    logging.warning("foo")
-    logging.warning("bar")
-    logging.warning("baz")
-    await asyncio.sleep(0)
+    store.log(log.LogEntry("foo", "info"))
+    store.log(log.LogEntry("bar", "info"))
+    store.log(log.LogEntry("baz", "info"))
     assert len(store.data) == 3
-    assert "baz" in store.data[-1].msg
+    assert ["foo", "bar", "baz"] == [x.msg for x in store.data]
 
     # overflow
-    logging.warning("boo")
-    await asyncio.sleep(0)
+    store.log(log.LogEntry("boo", "info"))
     assert len(store.data) == 3
-    assert "boo" in store.data[-1].msg
-    store.done()
+    assert ["bar", "baz", "boo"] == [x.msg for x in store.data]

@@ -1,9 +1,7 @@
-from unittest import mock
-
-import pytest
-
-from mitmproxy.test import taddons
 from mitmproxy.tools.console import keymap
+from mitmproxy.test import taddons
+from unittest import mock
+import pytest
 
 
 def test_binding():
@@ -77,22 +75,22 @@ def test_remove():
 def test_load_path(tmpdir):
     dst = str(tmpdir.join("conf"))
 
-    with taddons.context() as tctx:
-        kmc = keymap.KeymapConfig(tctx.master)
+    kmc = keymap.KeymapConfig()
+    with taddons.context(kmc) as tctx:
         km = keymap.Keymap(tctx.master)
         tctx.master.keymap = km
 
-        with open(dst, "wb") as f:
+        with open(dst, 'wb') as f:
             f.write(b"\xff\xff\xff")
         with pytest.raises(keymap.KeyBindingError, match="expected UTF8"):
             kmc.load_path(km, dst)
 
-        with open(dst, "w") as f:
+        with open(dst, 'w') as f:
             f.write("'''")
         with pytest.raises(keymap.KeyBindingError):
             kmc.load_path(km, dst)
 
-        with open(dst, "w") as f:
+        with open(dst, 'w') as f:
             f.write(
                 """
                     -   key: key1
@@ -105,7 +103,7 @@ def test_load_path(tmpdir):
         with pytest.raises(keymap.KeyBindingError):
             kmc.load_path(km, dst)
 
-        with open(dst, "w") as f:
+        with open(dst, 'w') as f:
             f.write(
                 """
                     -   key: key1
@@ -117,9 +115,9 @@ def test_load_path(tmpdir):
                 """
             )
         kmc.load_path(km, dst)
-        assert km.get("chooser", "key1")
+        assert(km.get("chooser", "key1"))
 
-        with open(dst, "w") as f:
+        with open(dst, 'w') as f:
             f.write(
                 """
                     -   key: key2
@@ -131,11 +129,11 @@ def test_load_path(tmpdir):
                 """
             )
         kmc.load_path(km, dst)
-        assert km.get("flowlist", "key2")
-        assert km.get("flowview", "key2")
+        assert(km.get("flowlist", "key2"))
+        assert(km.get("flowview", "key2"))
 
         km.add("key123", "str", ["flowlist", "flowview"])
-        with open(dst, "w") as f:
+        with open(dst, 'w') as f:
             f.write(
                 """
                     -   key: key123
@@ -144,14 +142,14 @@ def test_load_path(tmpdir):
                 """
             )
         kmc.load_path(km, dst)
-        assert km.get("flowlist", "key123")
-        assert km.get("flowview", "key123")
-        assert km.get("options", "key123")
+        assert(km.get("flowlist", "key123"))
+        assert(km.get("flowview", "key123"))
+        assert(km.get("options", "key123"))
 
 
 def test_parse():
-    with taddons.context() as tctx:
-        kmc = keymap.KeymapConfig(tctx.master)
+    kmc = keymap.KeymapConfig()
+    with taddons.context(kmc):
         assert kmc.parse("") == []
         assert kmc.parse("\n\n\n   \n") == []
         with pytest.raises(keymap.KeyBindingError, match="expected a list of keys"):
@@ -165,9 +163,7 @@ def test_parse():
                         nonexistent: bar
                 """
             )
-        with pytest.raises(
-            keymap.KeyBindingError, match="Missing required key attributes"
-        ):
+        with pytest.raises(keymap.KeyBindingError, match="Missing required key attributes"):
             kmc.parse(
                 """
                     -   help: key1
@@ -197,11 +193,4 @@ def test_parse():
                         foo bar
                         foo bar
             """
-        ) == [
-            {
-                "key": "key1",
-                "ctx": ["one", "two"],
-                "help": "one",
-                "cmd": "foo bar foo bar\n",
-            }
-        ]
+        ) == [{"key": "key1", "ctx": ["one", "two"], "help": "one", "cmd": "foo bar foo bar\n"}]

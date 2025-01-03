@@ -17,7 +17,7 @@ CSS_SPECIAL_AREAS = (
     "'" + strutils.SINGLELINE_CONTENT + strutils.NO_ESCAPE + "'",
     '"' + strutils.SINGLELINE_CONTENT + strutils.NO_ESCAPE + '"',
     r"/\*" + strutils.MULTILINE_CONTENT + r"\*/",
-    "//" + strutils.SINGLELINE_CONTENT + "$",
+    "//" + strutils.SINGLELINE_CONTENT + "$"
 )
 CSS_SPECIAL_CHARS = "{};:"
 
@@ -50,16 +50,14 @@ def beautify(data: str, indent: str = "    "):
 
 class ViewCSS(base.View):
     name = "CSS"
+    content_types = [
+        "text/css"
+    ]
 
     def __call__(self, data, **metadata):
         data = data.decode("utf8", "surrogateescape")
         beautified = beautify(data)
         return "CSS", base.format_text(beautified)
-
-    def render_priority(
-        self, data: bytes, *, content_type: str | None = None, **metadata
-    ) -> float:
-        return float(bool(data) and content_type == "text/css")
 
 
 if __name__ == "__main__":  # pragma: no cover
@@ -68,4 +66,4 @@ if __name__ == "__main__":  # pragma: no cover
 
     t = time.time()
     x = beautify(data)
-    print(f"Beautifying vendor.css took {time.time() - t:.2}s")
+    print("Beautifying vendor.css took {:.2}s".format(time.time() - t))

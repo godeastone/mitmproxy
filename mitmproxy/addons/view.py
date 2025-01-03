@@ -8,33 +8,23 @@ The View:
 - Exposes a settings store for flows that automatically expires if the flow is
   removed from the store.
 """
-
 import collections
-import logging
-import re
-from collections.abc import Iterator
-from collections.abc import MutableMapping
-from collections.abc import Sequence
-from typing import Any
-from typing import Optional
+import typing
 
+import blinker
 import sortedcontainers
 
 import mitmproxy.flow
-from mitmproxy import command
-from mitmproxy import connection
-from mitmproxy import ctx
-from mitmproxy import dns
-from mitmproxy import exceptions
 from mitmproxy import flowfilter
-from mitmproxy import hooks
-from mitmproxy import http
+from mitmproxy import exceptions
+from mitmproxy import command
+from mitmproxy import connections
+from mitmproxy import ctx
 from mitmproxy import io
+from mitmproxy import http
 from mitmproxy import tcp
-from mitmproxy import udp
-from mitmproxy.log import ALERT
 from mitmproxy.utils import human
-from mitmproxy.utils import signals
+
 
 # The underlying sorted list implementation expects the sort key to be stable
 # for the lifetime of the object. However, if we sort by size, for instance,
@@ -51,7 +41,7 @@ class _OrderKey:
     def __init__(self, view):
         self.view = view
 
-    def generate(self, f: mitmproxy.flow.Flow) -> Any:  # pragma: no cover
+    def generate(self, f: mitmproxy.flow.Flow) -> typing.Any:  # pragma: no cover
         pass
 
     def refresh(self, f):
@@ -62,7 +52,7 @@ class _OrderKey:
             self.view._view.remove(f)
             self.view.settings[f][k] = new
             self.view._view.add(f)
-            self.view.sig_view_refresh.send()
+            self.view.sig_view_refresh.send(self.view)
 
     def _key(self):
         return "_order_%s" % id(self)
@@ -82,17 +72,15 @@ class _OrderKey:
 
 class OrderRequestStart(_OrderKey):
     def generate(self, f: mitmproxy.flow.Flow) -> float:
-        return f.timestamp_created
+        return f.timestamp_start
 
 
 class OrderRequestMethod(_OrderKey):
     def generate(self, f: mitmproxy.flow.Flow) -> str:
         if isinstance(f, http.HTTPFlow):
             return f.request.method
-        elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
-            return f.type.upper()
-        elif isinstance(f, dns.DNSFlow):
-            return dns.op_codes.to_str(f.request.op_code)
+        elif isinstance(f, tcp.TCPFlow):
+            return "TCP"
         else:
             raise NotImplementedError()
 
@@ -101,10 +89,8 @@ class OrderRequestURL(_OrderKey):
     def generate(self, f: mitmproxy.flow.Flow) -> str:
         if isinstance(f, http.HTTPFlow):
             return f.request.url
-        elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
+        elif isinstance(f, tcp.TCPFlow):
             return human.format_address(f.server_conn.address)
-        elif isinstance(f, dns.DNSFlow):
-            return f.request.questions[0].name if f.request.questions else ""
         else:
             raise NotImplementedError()
 
@@ -118,16 +104,16 @@ class OrderKeySize(_OrderKey):
             if f.response and f.response.raw_content:
                 size += len(f.response.raw_content)
             return size
-        elif isinstance(f, (tcp.TCPFlow, udp.UDPFlow)):
+        elif isinstance(f, tcp.TCPFlow):
             size = 0
             for message in f.messages:
                 size += len(message.content)
             return size
-        elif isinstance(f, dns.DNSFlow):
-            return f.response.size if f.response else 0
         else:
             raise NotImplementedError()
 
+
+matchall = flowfilter.parse("~http | ~tcp")
 
 orders = [
     ("t", "time"),
@@ -137,71 +123,64 @@ orders = [
 ]
 
 
-def _signal_with_flow(flow: mitmproxy.flow.Flow) -> None: ...
-
-
-def _sig_view_remove(flow: mitmproxy.flow.Flow, index: int) -> None: ...
-
-
 class View(collections.abc.Sequence):
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
-        self._store: collections.OrderedDict[str, mitmproxy.flow.Flow] = (
-            collections.OrderedDict()
-        )
-        self.filter = flowfilter.match_all
+        self._store = collections.OrderedDict()
+        self.filter = matchall
         # Should we show only marked flows?
         self.show_marked = False
 
         self.default_order = OrderRequestStart(self)
         self.orders = dict(
-            time=OrderRequestStart(self),
-            method=OrderRequestMethod(self),
-            url=OrderRequestURL(self),
-            size=OrderKeySize(self),
+            time = OrderRequestStart(self), method = OrderRequestMethod(self),
+            url = OrderRequestURL(self), size = OrderKeySize(self),
         )
-        self.order_key: _OrderKey = self.default_order
+        self.order_key = self.default_order
         self.order_reversed = False
         self.focus_follow = False
 
-        self._view = sortedcontainers.SortedListWithKey(key=self.order_key)
+        self._view = sortedcontainers.SortedListWithKey(
+            key = self.order_key
+        )
 
         # The sig_view* signals broadcast events that affect the view. That is,
         # an update to a flow in the store but not in the view does not trigger
         # a signal. All signals are called after the view has been updated.
-        self.sig_view_update = signals.SyncSignal(_signal_with_flow)
-        self.sig_view_add = signals.SyncSignal(_signal_with_flow)
-        self.sig_view_remove = signals.SyncSignal(_sig_view_remove)
+        self.sig_view_update = blinker.Signal()
+        self.sig_view_add = blinker.Signal()
+        self.sig_view_remove = blinker.Signal()
         # Signals that the view should be refreshed completely
-        self.sig_view_refresh = signals.SyncSignal(lambda: None)
+        self.sig_view_refresh = blinker.Signal()
 
         # The sig_store* signals broadcast events that affect the underlying
         # store. If a flow is removed from just the view, sig_view_remove is
         # triggered. If it is removed from the store while it is also in the
         # view, both sig_store_remove and sig_view_remove are triggered.
-        self.sig_store_remove = signals.SyncSignal(_signal_with_flow)
+        self.sig_store_remove = blinker.Signal()
         # Signals that the store should be refreshed completely
-        self.sig_store_refresh = signals.SyncSignal(lambda: None)
+        self.sig_store_refresh = blinker.Signal()
 
         self.focus = Focus(self)
         self.settings = Settings(self)
 
     def load(self, loader):
         loader.add_option(
-            "view_filter", Optional[str], None, "Limit the view to matching flows."
+            "view_filter", typing.Optional[str], None,
+            "Limit the view to matching flows."
         )
         loader.add_option(
-            "view_order",
-            str,
-            "time",
+            "view_order", str, "time",
             "Flow sort order.",
             choices=list(map(lambda c: c[1], orders)),
         )
         loader.add_option(
-            "view_order_reversed", bool, False, "Reverse the sorting order."
+            "view_order_reversed", bool, False,
+            "Reverse the sorting order."
         )
         loader.add_option(
-            "console_focus_follow", bool, False, "Focus follows new flows."
+            "console_focus_follow", bool, False,
+            "Focus follows new flows."
         )
 
     def store_count(self):
@@ -209,7 +188,7 @@ class View(collections.abc.Sequence):
 
     def _rev(self, idx: int) -> int:
         """
-        Reverses an index, if needed
+            Reverses an index, if needed
         """
         if self.order_reversed:
             if idx < 0:
@@ -223,7 +202,7 @@ class View(collections.abc.Sequence):
     def __len__(self):
         return len(self._view)
 
-    def __getitem__(self, offset) -> Any:
+    def __getitem__(self, offset) -> typing.Any:
         return self._view[self._rev(offset)]
 
     # Reflect some methods to the efficient underlying implementation
@@ -232,12 +211,10 @@ class View(collections.abc.Sequence):
         v = self._view.bisect_right(f)
         return self._rev(v - 1) + 1
 
-    def index(
-        self, f: mitmproxy.flow.Flow, start: int = 0, stop: int | None = None
-    ) -> int:
+    def index(self, f: mitmproxy.flow.Flow, start: int = 0, stop: typing.Optional[int] = None) -> int:
         return self._rev(self._view.index(f, start, stop))
 
-    def __contains__(self, f: Any) -> bool:
+    def __contains__(self, f: typing.Any) -> bool:
         return self._view.__contains__(f)
 
     def _order_key_name(self):
@@ -254,7 +231,7 @@ class View(collections.abc.Sequence):
                 continue
             if self.filter(i):
                 self._base_add(i)
-        self.sig_view_refresh.send()
+        self.sig_view_refresh.send(self)
 
     """ View API """
 
@@ -262,9 +239,9 @@ class View(collections.abc.Sequence):
     @command.command("view.focus.go")
     def go(self, offset: int) -> None:
         """
-        Go to a specified offset. Positive offests are from the beginning of
-        the view, negative from the end of the view, so that 0 is the first
-        flow, -1 is the last flow.
+            Go to a specified offset. Positive offests are from the beginning of
+            the view, negative from the end of the view, so that 0 is the first
+            flow, -1 is the last flow.
         """
         if len(self) == 0:
             return
@@ -279,7 +256,7 @@ class View(collections.abc.Sequence):
     @command.command("view.focus.next")
     def focus_next(self) -> None:
         """
-        Set focus to the next flow.
+            Set focus to the next flow.
         """
         if self.focus.index is not None:
             idx = self.focus.index + 1
@@ -291,7 +268,7 @@ class View(collections.abc.Sequence):
     @command.command("view.focus.prev")
     def focus_prev(self) -> None:
         """
-        Set focus to the previous flow.
+            Set focus to the previous flow.
         """
         if self.focus.index is not None:
             idx = self.focus.index - 1
@@ -302,27 +279,29 @@ class View(collections.abc.Sequence):
 
     # Order
     @command.command("view.order.options")
-    def order_options(self) -> Sequence[str]:
+    def order_options(self) -> typing.Sequence[str]:
         """
-        Choices supported by the view_order option.
+            Choices supported by the view_order option.
         """
         return list(sorted(self.orders.keys()))
 
     @command.command("view.order.reverse")
     def set_reversed(self, boolean: bool) -> None:
         self.order_reversed = boolean
-        self.sig_view_refresh.send()
+        self.sig_view_refresh.send(self)
 
     @command.command("view.order.set")
     def set_order(self, order_key: str) -> None:
         """
-        Sets the current view order.
+            Sets the current view order.
         """
         if order_key not in self.orders:
-            raise exceptions.CommandError("Unknown flow order: %s" % order_key)
-        key = self.orders[order_key]
-        self.order_key = key
-        newview = sortedcontainers.SortedListWithKey(key=key)
+            raise exceptions.CommandError(
+                "Unknown flow order: %s" % order_key
+            )
+        order_key = self.orders[order_key]
+        self.order_key = order_key
+        newview = sortedcontainers.SortedListWithKey(key=order_key)
         newview.update(self._view)
         self._view = newview
 
@@ -341,94 +320,101 @@ class View(collections.abc.Sequence):
     @command.command("view.filter.set")
     def set_filter_cmd(self, filter_expr: str) -> None:
         """
-        Sets the current view filter.
+            Sets the current view filter.
         """
         filt = None
         if filter_expr:
-            try:
-                filt = flowfilter.parse(filter_expr)
-            except ValueError as e:
-                raise exceptions.CommandError(str(e)) from e
+            filt = flowfilter.parse(filter_expr)
+            if not filt:
+                raise exceptions.CommandError(
+                    "Invalid interception filter: %s" % filter_expr
+                )
         self.set_filter(filt)
 
-    def set_filter(self, flt: flowfilter.TFilter | None):
-        self.filter = flt or flowfilter.match_all
+    def set_filter(self, flt: typing.Optional[flowfilter.TFilter]):
+        self.filter = flt or matchall
         self._refilter()
 
     # View Updates
     @command.command("view.clear")
     def clear(self) -> None:
         """
-        Clears both the store and view.
+            Clears both the store and view.
         """
         self._store.clear()
         self._view.clear()
-        self.sig_view_refresh.send()
-        self.sig_store_refresh.send()
+        self.sig_view_refresh.send(self)
+        self.sig_store_refresh.send(self)
 
     @command.command("view.clear_unmarked")
     def clear_not_marked(self) -> None:
         """
-        Clears only the unmarked flows.
+            Clears only the unmarked flows.
         """
         for flow in self._store.copy().values():
             if not flow.marked:
                 self._store.pop(flow.id)
 
         self._refilter()
-        self.sig_store_refresh.send()
+        self.sig_store_refresh.send(self)
 
     # View Settings
     @command.command("view.settings.getval")
     def getvalue(self, flow: mitmproxy.flow.Flow, key: str, default: str) -> str:
         """
-        Get a value from the settings store for the specified flow.
+            Get a value from the settings store for the specified flow.
         """
         return self.settings[flow].get(key, default)
 
     @command.command("view.settings.setval.toggle")
-    def setvalue_toggle(self, flows: Sequence[mitmproxy.flow.Flow], key: str) -> None:
+    def setvalue_toggle(
+        self,
+        flows: typing.Sequence[mitmproxy.flow.Flow],
+        key: str
+    ) -> None:
         """
-        Toggle a boolean value in the settings store, setting the value to
-        the string "true" or "false".
+            Toggle a boolean value in the settings store, setting the value to
+            the string "true" or "false".
         """
         updated = []
         for f in flows:
             current = self.settings[f].get("key", "false")
             self.settings[f][key] = "false" if current == "true" else "true"
             updated.append(f)
-        ctx.master.addons.trigger(hooks.UpdateHook(updated))
+        ctx.master.addons.trigger("update", updated)
 
     @command.command("view.settings.setval")
     def setvalue(
-        self, flows: Sequence[mitmproxy.flow.Flow], key: str, value: str
+        self,
+        flows: typing.Sequence[mitmproxy.flow.Flow],
+        key: str, value: str
     ) -> None:
         """
-        Set a value in the settings store for the specified flows.
+            Set a value in the settings store for the specified flows.
         """
         updated = []
         for f in flows:
             self.settings[f][key] = value
             updated.append(f)
-        ctx.master.addons.trigger(hooks.UpdateHook(updated))
+        ctx.master.addons.trigger("update", updated)
 
     # Flows
     @command.command("view.flows.duplicate")
-    def duplicate(self, flows: Sequence[mitmproxy.flow.Flow]) -> None:
+    def duplicate(self, flows: typing.Sequence[mitmproxy.flow.Flow]) -> None:
         """
-        Duplicates the specified flows, and sets the focus to the first
-        duplicate.
+            Duplicates the specified flows, and sets the focus to the first
+            duplicate.
         """
         dups = [f.copy() for f in flows]
         if dups:
             self.add(dups)
             self.focus.flow = dups[0]
-            logging.log(ALERT, "Duplicated %s flows" % len(dups))
+            ctx.log.alert("Duplicated %s flows" % len(dups))
 
     @command.command("view.flows.remove")
-    def remove(self, flows: Sequence[mitmproxy.flow.Flow]) -> None:
+    def remove(self, flows: typing.Sequence[mitmproxy.flow.Flow]) -> None:
         """
-        Removes the flow from the underlying store and the view.
+            Removes the flow from the underlying store and the view.
         """
         for f in flows:
             if f.id in self._store:
@@ -439,16 +425,16 @@ class View(collections.abc.Sequence):
                     # sorting key, and we cannot reconstruct the index from that.
                     idx = self._view.index(f)
                     self._view.remove(f)
-                    self.sig_view_remove.send(flow=f, index=idx)
+                    self.sig_view_remove.send(self, flow=f, index=idx)
                 del self._store[f.id]
-                self.sig_store_remove.send(flow=f)
+                self.sig_store_remove.send(self, flow=f)
         if len(flows) > 1:
-            logging.log(ALERT, "Removed %s flows" % len(flows))
+            ctx.log.alert("Removed %s flows" % len(flows))
 
     @command.command("view.flows.resolve")
-    def resolve(self, flow_spec: str) -> Sequence[mitmproxy.flow.Flow]:
+    def resolve(self, flow_spec: str) -> typing.Sequence[mitmproxy.flow.Flow]:
         """
-        Resolve a flow list specification to an actual list of flows.
+            Resolve a flow list specification to an actual list of flows.
         """
         if flow_spec == "@all":
             return [i for i in self._store.values()]
@@ -462,30 +448,20 @@ class View(collections.abc.Sequence):
             return [i for i in self._store.values() if i.marked]
         elif flow_spec == "@unmarked":
             return [i for i in self._store.values() if not i.marked]
-        elif re.match(r"@[0-9a-f\-,]{36,}", flow_spec):
-            ids = flow_spec[1:].split(",")
-            return [i for i in self._store.values() if i.id in ids]
         else:
-            try:
-                filt = flowfilter.parse(flow_spec)
-            except ValueError as e:
-                raise exceptions.CommandError(str(e)) from e
+            filt = flowfilter.parse(flow_spec)
+            if not filt:
+                raise exceptions.CommandError("Invalid flow filter: %s" % flow_spec)
             return [i for i in self._store.values() if filt(i)]
 
     @command.command("view.flows.create")
     def create(self, method: str, url: str) -> None:
         try:
-            req = http.Request.make(method.upper(), url)
+            req = http.HTTPRequest.make(method.upper(), url)
         except ValueError as e:
             raise exceptions.CommandError("Invalid URL: %s" % e)
-
-        c = connection.Client(
-            peername=("", 0),
-            sockname=("", 0),
-            timestamp_start=req.timestamp_start - 0.0001,
-        )
-        s = connection.Server(address=(req.host, req.port))
-
+        c = connections.ClientConnection.make_dummy(("", 0))
+        s = connections.ServerConnection.make_dummy((req.host, req.port))
         f = http.HTTPFlow(c, s)
         f.request = req
         f.request.headers["Host"] = req.host
@@ -494,7 +470,7 @@ class View(collections.abc.Sequence):
     @command.command("view.flows.load")
     def load_file(self, path: mitmproxy.types.Path) -> None:
         """
-        Load flows into the view, without processing them with addons.
+            Load flows into the view, without processing them with addons.
         """
         try:
             with open(path, "rb") as f:
@@ -504,14 +480,14 @@ class View(collections.abc.Sequence):
                     # .newid() method or something.
                     self.add([i.copy()])
         except OSError as e:
-            logging.error(e.strerror)
+            ctx.log.error(e.strerror)
         except exceptions.FlowReadException as e:
-            logging.error(str(e))
+            ctx.log.error(str(e))
 
-    def add(self, flows: Sequence[mitmproxy.flow.Flow]) -> None:
+    def add(self, flows: typing.Sequence[mitmproxy.flow.Flow]) -> None:
         """
-        Adds a flow to the state. If the flow already exists, it is
-        ignored.
+            Adds a flow to the state. If the flow already exists, it is
+            ignored.
         """
         for f in flows:
             if f.id not in self._store:
@@ -520,12 +496,12 @@ class View(collections.abc.Sequence):
                     self._base_add(f)
                     if self.focus_follow:
                         self.focus.flow = f
-                    self.sig_view_add.send(flow=f)
+                    self.sig_view_add.send(self, flow=f)
 
-    def get_by_id(self, flow_id: str) -> mitmproxy.flow.Flow | None:
+    def get_by_id(self, flow_id: str) -> typing.Optional[mitmproxy.flow.Flow]:
         """
-        Get flow with the given id from the store.
-        Returns None if the flow is not found.
+            Get flow with the given id from the store.
+            Returns None if the flow is not found.
         """
         return self._store.get(flow_id)
 
@@ -533,21 +509,21 @@ class View(collections.abc.Sequence):
     @command.command("view.properties.length")
     def get_length(self) -> int:
         """
-        Returns view length.
+            Returns view length.
         """
         return len(self)
 
     @command.command("view.properties.marked")
     def get_marked(self) -> bool:
         """
-        Returns true if view is in marked mode.
+            Returns true if view is in marked mode.
         """
         return self.show_marked
 
     @command.command("view.properties.marked.toggle")
     def toggle_marked(self) -> None:
         """
-        Toggle whether to show marked views only.
+            Toggle whether to show marked views only.
         """
         self.show_marked = not self.show_marked
         self._refilter()
@@ -555,7 +531,7 @@ class View(collections.abc.Sequence):
     @command.command("view.properties.inbounds")
     def inbounds(self, index: int) -> bool:
         """
-        Is this 0 <= index < len(self)?
+            Is this 0 <= index < len(self)?
         """
         return 0 <= index < len(self)
 
@@ -564,10 +540,11 @@ class View(collections.abc.Sequence):
         if "view_filter" in updated:
             filt = None
             if ctx.options.view_filter:
-                try:
-                    filt = flowfilter.parse(ctx.options.view_filter)
-                except ValueError as e:
-                    raise exceptions.OptionsError(str(e)) from e
+                filt = flowfilter.parse(ctx.options.view_filter)
+                if not filt:
+                    raise exceptions.OptionsError(
+                        "Invalid interception filter: %s" % ctx.options.view_filter
+                    )
             self.set_filter(filt)
         if "view_order" in updated:
             if ctx.options.view_order not in self.orders:
@@ -580,7 +557,7 @@ class View(collections.abc.Sequence):
         if "console_focus_follow" in updated:
             self.focus_follow = ctx.options.console_focus_follow
 
-    def requestheaders(self, f):
+    def request(self, f):
         self.add([f])
 
     def error(self, f):
@@ -610,30 +587,9 @@ class View(collections.abc.Sequence):
     def tcp_end(self, f):
         self.update([f])
 
-    def udp_start(self, f):
-        self.add([f])
-
-    def udp_message(self, f):
-        self.update([f])
-
-    def udp_error(self, f):
-        self.update([f])
-
-    def udp_end(self, f):
-        self.update([f])
-
-    def dns_request(self, f):
-        self.add([f])
-
-    def dns_response(self, f):
-        self.update([f])
-
-    def dns_error(self, f):
-        self.update([f])
-
-    def update(self, flows: Sequence[mitmproxy.flow.Flow]) -> None:
+    def update(self, flows: typing.Sequence[mitmproxy.flow.Flow]) -> None:
         """
-        Updates a list of flows. If flow is not in the state, it's ignored.
+            Updates a list of flows. If flow is not in the state, it's ignored.
         """
         for f in flows:
             if f.id in self._store:
@@ -642,14 +598,14 @@ class View(collections.abc.Sequence):
                         self._base_add(f)
                         if self.focus_follow:
                             self.focus.flow = f
-                        self.sig_view_add.send(flow=f)
+                        self.sig_view_add.send(self, flow=f)
                     else:
                         # This is a tad complicated. The sortedcontainers
                         # implementation assumes that the order key is stable. If
                         # it changes mid-way Very Bad Things happen. We detect when
                         # this happens, and re-fresh the item.
                         self.order_key.refresh(f)
-                        self.sig_view_update.send(flow=f)
+                        self.sig_view_update.send(self, flow=f)
                 else:
                     try:
                         idx = self._view.index(f)
@@ -657,18 +613,17 @@ class View(collections.abc.Sequence):
                         pass  # The value was not in the view
                     else:
                         self._view.remove(f)
-                        self.sig_view_remove.send(flow=f, index=idx)
+                        self.sig_view_remove.send(self, flow=f, index=idx)
 
 
 class Focus:
     """
-    Tracks a focus element within a View.
+        Tracks a focus element within a View.
     """
-
     def __init__(self, v: View) -> None:
         self.view = v
-        self._flow: mitmproxy.flow.Flow | None = None
-        self.sig_change = signals.SyncSignal(lambda: None)
+        self._flow: typing.Optional[mitmproxy.flow.Flow] = None
+        self.sig_change = blinker.Signal()
         if len(self.view):
             self.flow = self.view[0]
         v.sig_view_add.connect(self._sig_view_add)
@@ -676,18 +631,18 @@ class Focus:
         v.sig_view_refresh.connect(self._sig_view_refresh)
 
     @property
-    def flow(self) -> mitmproxy.flow.Flow | None:
+    def flow(self) -> typing.Optional[mitmproxy.flow.Flow]:
         return self._flow
 
     @flow.setter
-    def flow(self, f: mitmproxy.flow.Flow | None):
+    def flow(self, f: typing.Optional[mitmproxy.flow.Flow]):
         if f is not None and f not in self.view:
             raise ValueError("Attempt to set focus to flow not in view")
         self._flow = f
-        self.sig_change.send()
+        self.sig_change.send(self)
 
     @property
-    def index(self) -> int | None:
+    def index(self) -> typing.Optional[int]:
         if self.flow:
             return self.view.index(self.flow)
         return None
@@ -701,21 +656,21 @@ class Focus:
     def _nearest(self, f, v):
         return min(v._bisect(f), len(v) - 1)
 
-    def _sig_view_remove(self, flow, index):
-        if len(self.view) == 0:
+    def _sig_view_remove(self, view, flow, index):
+        if len(view) == 0:
             self.flow = None
         elif flow is self.flow:
             self.index = min(index, len(self.view) - 1)
 
-    def _sig_view_refresh(self):
-        if len(self.view) == 0:
+    def _sig_view_refresh(self, view):
+        if len(view) == 0:
             self.flow = None
         elif self.flow is None:
-            self.flow = self.view[0]
-        elif self.flow not in self.view:
-            self.flow = self.view[self._nearest(self.flow, self.view)]
+            self.flow = view[0]
+        elif self.flow not in view:
+            self.flow = view[self._nearest(self.flow, view)]
 
-    def _sig_view_add(self, flow):
+    def _sig_view_add(self, view, flow):
         # We only have to act if we don't have a focus element
         if not self.flow:
             self.flow = flow
@@ -724,11 +679,11 @@ class Focus:
 class Settings(collections.abc.Mapping):
     def __init__(self, view: View) -> None:
         self.view = view
-        self._values: MutableMapping[str, dict] = {}
+        self._values: typing.MutableMapping[str, typing.Dict] = {}
         view.sig_store_remove.connect(self._sig_store_remove)
         view.sig_store_refresh.connect(self._sig_store_refresh)
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> typing.Iterator:
         return iter(self._values)
 
     def __len__(self) -> int:
@@ -739,11 +694,11 @@ class Settings(collections.abc.Mapping):
             raise KeyError
         return self._values.setdefault(f.id, {})
 
-    def _sig_store_remove(self, flow):
+    def _sig_store_remove(self, view, flow):
         if flow.id in self._values:
             del self._values[flow.id]
 
-    def _sig_store_refresh(self):
+    def _sig_store_refresh(self, view):
         for fid in list(self._values.keys()):
-            if fid not in self.view._store:
+            if fid not in view._store:
                 del self._values[fid]

@@ -1,7 +1,5 @@
 import time
-
 import pytest
-
 from mitmproxy.utils import human
 
 
@@ -30,11 +28,10 @@ def test_parse_size():
 def test_pretty_size():
     assert human.pretty_size(0) == "0b"
     assert human.pretty_size(100) == "100b"
-    assert human.pretty_size(1024) == "1.0k"
-    assert human.pretty_size(1024 + 512) == "1.5k"
-    assert human.pretty_size(1024 * 1024) == "1.0m"
-    assert human.pretty_size(10 * 1024 * 1024) == "10.0m"
-    assert human.pretty_size(100 * 1024 * 1024) == "100m"
+    assert human.pretty_size(1024) == "1k"
+    assert human.pretty_size(1024 + (1024 / 2.0)) == "1.5k"
+    assert human.pretty_size(1024 * 1024) == "1m"
+    assert human.pretty_size(10 * 1024 * 1024) == "10m"
 
 
 def test_pretty_duration():
@@ -55,10 +52,7 @@ def test_pretty_duration():
 
 def test_format_address():
     assert human.format_address(("::1", "54010", "0", "0")) == "[::1]:54010"
-    assert (
-        human.format_address(("::ffff:127.0.0.1", "54010", "0", "0"))
-        == "127.0.0.1:54010"
-    )
+    assert human.format_address(("::ffff:127.0.0.1", "54010", "0", "0")) == "127.0.0.1:54010"
     assert human.format_address(("127.0.0.1", "54010")) == "127.0.0.1:54010"
     assert human.format_address(("example.com", "54010")) == "example.com:54010"
     assert human.format_address(("::", "8080")) == "*:8080"

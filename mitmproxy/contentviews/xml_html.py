@@ -1,11 +1,10 @@
 import io
 import re
 import textwrap
-from collections.abc import Iterable
+from typing import Iterable, Optional
 
 from mitmproxy.contentviews import base
 from mitmproxy.utils import sliding_window
-from mitmproxy.utils import strutils
 
 """
 A custom XML/HTML prettifier. Compared to other prettifiers, its main features are:
@@ -22,21 +21,8 @@ The implementation is split into two main parts: tokenization and formatting of 
 REGEX_TAG = re.compile(r"[a-zA-Z0-9._:\-]+(?!=)")
 # https://www.w3.org/TR/html5/syntax.html#void-elements
 HTML_VOID_ELEMENTS = {
-    "area",
-    "base",
-    "br",
-    "col",
-    "embed",
-    "hr",
-    "img",
-    "input",
-    "keygen",
-    "link",
-    "meta",
-    "param",
-    "source",
-    "track",
-    "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param",
+    "source", "track", "wbr"
 }
 NO_INDENT_TAGS = {"xml", "doctype", "html"}
 INDENT = 2
@@ -47,7 +33,10 @@ class Token:
         self.data = data
 
     def __repr__(self):
-        return f"{type(self).__name__}({self.data})"
+        return "{}({})".format(
+            type(self).__name__,
+            self.data
+        )
 
 
 class Text(Token):
@@ -78,12 +67,8 @@ class Tag(Token):
 
     @property
     def is_self_closing(self):
-        return (
-            self.is_comment
-            or self.is_cdata
-            or self.data.endswith("/>")
-            or self.tag in HTML_VOID_ELEMENTS
-        )
+        return self.is_comment or self.is_cdata or self.data.endswith(
+            "/>") or self.tag in HTML_VOID_ELEMENTS
 
     @property
     def is_opening(self):
@@ -110,7 +95,7 @@ def tokenize(data: str) -> Iterable[Token]:
         end = data.find(char, start)
         if end == -1:
             end = len(data)
-        ret = data[i : end + include]
+        ret = data[i:end + include]
         i = end + include
         return ret
 
@@ -139,38 +124,22 @@ def indent_text(data: str, prefix: str) -> str:
     return textwrap.indent(dedented, prefix[:32])
 
 
-def is_inline_text(a: Token | None, b: Token | None, c: Token | None) -> bool:
+def is_inline_text(a: Optional[Token], b: Optional[Token], c: Optional[Token]) -> bool:
     if isinstance(a, Tag) and isinstance(b, Text) and isinstance(c, Tag):
         if a.is_opening and "\n" not in b.data and c.is_closing and a.tag == c.tag:
             return True
     return False
 
 
-def is_inline(
-    prev2: Token | None,
-    prev1: Token | None,
-    t: Token | None,
-    next1: Token | None,
-    next2: Token | None,
-) -> bool:
+def is_inline(prev2: Optional[Token], prev1: Optional[Token], t: Optional[Token], next1: Optional[Token], next2: Optional[Token]) -> bool:
     if isinstance(t, Text):
         return is_inline_text(prev1, t, next1)
     elif isinstance(t, Tag):
         if is_inline_text(prev2, prev1, t) or is_inline_text(t, next1, next2):
             return True
-        if (
-            isinstance(next1, Tag)
-            and t.is_opening
-            and next1.is_closing
-            and t.tag == next1.tag
-        ):
+        if isinstance(next1, Tag) and t.is_opening and next1.is_closing and t.tag == next1.tag:
             return True  # <div></div> (start tag)
-        if (
-            isinstance(prev1, Tag)
-            and prev1.is_opening
-            and t.is_closing
-            and prev1.tag == t.tag
-        ):
+        if isinstance(prev1, Tag) and prev1.is_opening and t.is_closing and prev1.tag == t.tag:
             return True  # <div></div> (end tag)
     return False
 
@@ -245,7 +214,7 @@ def format_xml(tokens: Iterable[Token]) -> str:
 
 class ViewXmlHtml(base.View):
     name = "XML/HTML"
-    __content_types = ("text/xml", "text/html")
+    content_types = ["text/xml", "text/html"]
 
     def __call__(self, data, **metadata):
         # TODO:
@@ -264,14 +233,3 @@ class ViewXmlHtml(base.View):
         else:
             t = "XML"
         return t, pretty
-
-    def render_priority(
-        self, data: bytes, *, content_type: str | None = None, **metadata
-    ) -> float:
-        if not data:
-            return 0
-        if content_type in self.__content_types:
-            return 1
-        elif strutils.is_xml(data):
-            return 0.4
-        return 0

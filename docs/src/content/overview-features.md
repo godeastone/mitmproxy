@@ -7,8 +7,8 @@ menu:
 
 # Features
 
+
 - [Anticache](#anticache)
-- [Blocklist](#blocklist)
 - [Client-side replay](#client-side-replay)
 - [Map Local](#map-local)
 - [Map Remote](#map-remote)
@@ -19,41 +19,17 @@ menu:
 - [Sticky Auth](#sticky-auth)
 - [Sticky Cookies](#sticky-cookies)
 - [Streaming](#streaming)
+- [Upstream Certificates](#upstream-certificates)
+
 
 ## Anticache
 
 When the `anticache` option is set, it removes headers (`if-none-match` and
-`if-modified-since`) that might elicit a `304 Not Modified` response from the
+`if-modified-since`) that might elicit a `304 not modified` response from the
 server. This is useful when you want to make sure you capture an HTTP exchange
 in its totality. It's also often used during client-side replay, when you want
 to make sure the server responds with complete data.
 
-## Blocklist
-
-Using the `block_list` option, you can block particular websites or requests.
-Mitmproxy returns a fixed HTTP status code instead, or no response at all.
-
-`block_list` patterns look like this:
-
-```
-/flow-filter/status-code
-```
-
-* **flow-filter** is an optional mitmproxy [filter expression]({{< relref "concepts-filters">}})
-  that describes which requests should be blocked.
-* **status-code** is the [HTTP status code](https://en.wikipedia.org/wiki/List_of_HTTP_status_codes)
-  served by mitmproxy for blocked requests.
-  A special status code of 444 instructs mitmproxy to "hang up" and not send any response at all.
-
-The _separator_ is arbitrary, and is defined by the first character.
-
-#### Examples
-
-Pattern | Description
-------- | -----------
-`:~d google-analytics.com:404` | Block all requests to google-analytics.com, and return a "404 Not Found" instead.
-`:~d example.com$:444` | Block all requests to example.com, and do not send an HTTP response.
-`:!~d ^example\.com$:403` | Only allow HTTP requests to *example.com*. Note that this is not secure against an active adversary and can be bypassed, for example by switching to non-HTTP protocols.
 
 ## Client-side replay
 
@@ -65,6 +41,7 @@ conversation, where requests may have been made concurrently.
 
 You may want to use client-side replay in conjunction with the `anticache`
 option, to make sure the server responds with complete data.
+
 
 ## Map Local
 
@@ -87,17 +64,14 @@ and transparently returned to the client.
 * **flow-filter** is an optional mitmproxy [filter expression]({{< relref "concepts-filters">}})
 that additionally constrains which requests will be redirected.
 
-The _separator_ is arbitrary, and is defined by the first character (`|` in the example above).
-
-
-#### Examples
+### Examples
 
 Pattern | Description
 ------- | -----------
-`\|example.com/main.js\|~/main-local.js` | Replace `example.com/main.js` with `~/main-local.js`.
-`\|example.com/static\|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/foo/bar.css`.
-`\|example.com/static/foo\|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/bar.css`.
-`\|~m GET\|example.com/static\|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/foo/bar.css` (but only for GET requests).
+`|example.com/main.js|~/main-local.js` | Replace `example.com/main.js` with `~/main-local.js`.
+`|example.com/static|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/foo/bar.css`.
+`|example.com/static/foo|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/bar.css`.
+`|~m GET|example.com/static|~/static` | Replace `example.com/static/foo/bar.css` with `~/static/foo/bar.css` (but only for GET requests).
 
 ### Details
 
@@ -141,12 +115,18 @@ Served File:                 Preferred: <span style="color:#82b719">~/static-dir
                              Otherwise: 404 response without content
 </pre>
 
+
+
+
 ## Map Remote
 
 The `map_remote` option lets you specify an arbitrary number of patterns that
 define replacements within HTTP request URLs before they are sent to a server.
 The substituted URL is fetched instead of the original resource
 and the corresponding HTTP response is returned transparently to the client.
+Note that if the original destination uses HTTP2, the substituted destination
+needs to support HTTP2 as well, otherwise the substituted request may fail.
+As a workaround you can start mitmproxy with the `--no-http2` flag to disable HTTP2.
 `map_remote` patterns look like this:
 
 ```
@@ -161,11 +141,13 @@ that defines which requests the `map_remote` option applies to.
 
 * **replacement** is a string literal that is substituted in.
 
-The _separator_ is arbitrary, and is defined by the first character (`|` in the example above).
+The _separator_ is arbitrary, and is defined by the first character.
 
-#### Examples
+### Examples
 
 Map all requests ending with `.jpg` to `https://placedog.net/640/480?random`.
+Note that this might fail if the original HTTP request destination uses HTTP2 but the replaced
+destination does not support HTTP2.
 
 ```
 |.*\.jpg$|https://placedog.net/640/480?random
@@ -176,6 +158,7 @@ Re-route all GET requests from `example.org` to `mitmproxy.org` (using `|` as th
 ```
 |~m GET|//example.org/|//mitmproxy.org/
 ```
+
 
 ## Modify Body
 
@@ -197,7 +180,7 @@ that defines which flows a replacement applies to.
 * **replacement** is a string literal that is substituted in. If the replacement string
 literal starts with `@` as in `@file-path`, it is treated as a **file path** from which the replacement is read.
 
-The _separator_ is arbitrary, and is defined by the first character (`/` in the example above).
+The _separator_ is arbitrary, and is defined by the first character.
 
 Modify hooks fire when either a client request or a server response is
 received. Only the matching flow component is affected: so, for example,
@@ -205,11 +188,9 @@ if a modify hook is triggered on server response, the replacement is
 only run on the Response object leaving the Request intact. You control
 whether the hook triggers on the request, response or both using the
 filter pattern. If you need finer-grained control than this, it's simple
-to create a script using the replacement API on Flow components. Body
-modifications have no effect on streamed bodies. See
-[Streaming]({{< relref "#streaming" >}}) for more detail.
+to create a script using the replacement API on Flow components.
 
-#### Examples
+### Examples
 
 Replace `foo` with `bar` in bodies of requests:
 
@@ -222,6 +203,7 @@ Replace `foo` with the data read from `~/xss-exploit`:
 ```bash
 mitmdump --modify-body :~q:foo:@~/xss-exploit
 ```
+
 
 ## Modify Headers
 
@@ -245,7 +227,7 @@ that defines which flows to modify headers on.
 headers with **name**. If the value string literal starts with `@` as in
 `@file-path`, it is treated as a **file path** from which the replacement is read.
 
-The _separator_ is arbitrary, and is defined by the first character (`/` in the example above).
+The _separator_ is arbitrary, and is defined by the first character.
 
 Existing headers are overwritten by default. This can be changed using a filter expression.
 
@@ -257,7 +239,7 @@ whether the hook triggers on the request, response or both using the
 filter pattern. If you need finer-grained control than this, it's simple
 to create a script using the replacement API on Flow components.
 
-#### Examples
+### Examples
 
 Set the `Host` header to `example.org` for all requests (existing `Host`
 headers are replaced):
@@ -277,7 +259,7 @@ Set the `User-Agent` header to the data read from `~/useragent.txt` for all requ
 (existing `User-Agent` headers are replaced):
 
 ```
-/~q/User-Agent/@~/useragent.txt
+/~q/Host/@~/useragent.txt
 ```
 
 Remove existing `Host` headers from all requests:
@@ -288,15 +270,12 @@ Remove existing `Host` headers from all requests:
 
 ## Proxy Authentication
 
-The `proxyauth` option asks the user for authentication before they are permitted to use the proxy.
+Asks the user for authentication before they are permitted to use the proxy.
 Authentication headers are stripped from the flows, so they are not passed to
-upstream servers. For now, only HTTP Basic Authentication is supported.
+upstream servers. For now, only HTTP Basic authentication is supported. The
+proxy auth options are not compatible with the transparent, socks or reverse
+proxy mode.
 
-Proxy Authentication does not work well in transparent proxy mode by design
-because the client is not aware that it is talking to a proxy.
-Mitmproxy will re-request credentials for every individual domain.
-SOCKS proxy authentication is currently unimplemented
-([#738](https://github.com/mitmproxy/mitmproxy/issues/738)).
 
 ## Server-side replay
 
@@ -328,6 +307,19 @@ updated in a similar way.
 You can turn off this behaviour by setting the `server_replay_refresh` option to
 `false`.
 
+### Replaying a session recorded in Reverse-proxy Mode
+
+If you have captured the session in reverse proxy mode, in order to replay it
+you still have to specify the server URL, otherwise you may get the error: 'HTTP
+protocol error in client request: Invalid HTTP request form (expected authority
+or absolute...)'.
+
+During replay, when the client's requests match previously recorded requests,
+then the respective recorded responses are simply replayed by mitmproxy.
+Otherwise, the unmatched requests is forwarded to the upstream server. If
+forwarding is not desired, you can use the --kill (-k) switch to prevent that.
+
+
 ## Sticky auth
 
 The `stickyauth` option is analogous to the sticky cookie option, in that HTTP
@@ -336,6 +328,7 @@ seen. This is enough to allow you to access a server resource using HTTP Basic
 authentication through the proxy. Note that <span
 data-role="program">mitmproxy</span> doesn't (yet) support replay of HTTP Digest
 authentication.
+
 
 ## Sticky cookies
 
@@ -354,15 +347,15 @@ replay]({{< relref "#client-side-replay" >}}) - you can record the
 authentication process once, and simply replay it on startup every time you need
 to interact with the secured resources.
 
+
 ## Streaming
 
 By default, mitmproxy will read an entire request/response, perform any
 indicated manipulations on it, and then send the message on to the other party.
 This can be problematic when downloading or uploading large files. When
 streaming is enabled, message bodies are not buffered on the proxy but instead
-sent directly to the server/client. This currently means that the message body
-will not be accessible within mitmproxy, and body modifications will have no
-effect. HTTP headers are still fully buffered before being sent.
+sent directly to the server/client. HTTP headers are still fully buffered before
+being sent.
 
 Request/response streaming is enabled by specifying a size cutoff in the
 `stream_large_bodies` option.
@@ -374,3 +367,30 @@ streamed. Requests/Responses that should be tagged for streaming by setting
 their ``.stream`` attribute to ``True``:
 
 {{< example src="examples/addons/http-stream-simple.py" lang="py" >}}
+
+### Websockets
+
+The `stream_websockets` option enables an analogous behaviour for websockets.
+When WebSocket streaming is enabled, portions of the code which may perform
+changes to the WebSocket message payloads will not have any effect on the actual
+payload sent to the server as the frames are immediately forwarded to the
+server. In contrast to HTTP streaming, where the body is not stored, the message
+payload will still be stored in the WebSocket flow.
+
+
+## Upstream Certificates
+
+When mitmproxy receives a connection destined for an SSL-protected service, it
+freezes the connection before reading its request data, and makes a connection
+to the upstream server to "sniff" the contents of its SSL certificate. The
+information gained - the **Common Name** and **Subject Alternative Names** - is
+then used to generate the interception certificate, which is sent to the client
+so the connection can continue.
+
+This rather intricate little dance lets us seamlessly generate correct
+certificates even if the client has specified only an IP address rather than the
+hostname. It also means that we don't need to sniff additional data to generate
+certs in transparent mode.
+
+Upstream cert sniffing is on by default, and can optionally be turned off with
+the `upstream_cert` option.

@@ -1,19 +1,16 @@
 import collections
 from http import cookiejar
-from typing import Optional
+from typing import List, Tuple, Dict, Optional  # noqa
 
-from mitmproxy import ctx
-from mitmproxy import exceptions
-from mitmproxy import flowfilter
-from mitmproxy import http
+from mitmproxy import http, flowfilter, ctx, exceptions
 from mitmproxy.net.http import cookies
 
-TOrigin = tuple[str, int, str]
+TOrigin = Tuple[str, int, str]
 
 
-def ckey(attrs: dict[str, str], f: http.HTTPFlow) -> TOrigin:
+def ckey(attrs: Dict[str, str], f: http.HTTPFlow) -> TOrigin:
     """
-    Returns a (domain, port, path) tuple.
+        Returns a (domain, port, path) tuple.
     """
     domain = f.request.host
     path = "/"
@@ -33,27 +30,25 @@ def domain_match(a: str, b: str) -> bool:
 
 
 class StickyCookie:
-    def __init__(self) -> None:
-        self.jar: collections.defaultdict[TOrigin, dict[str, str]] = (
-            collections.defaultdict(dict)
-        )
-        self.flt: flowfilter.TFilter | None = None
+    def __init__(self):
+        self.jar: Dict[TOrigin, Dict[str, str]] = collections.defaultdict(dict)
+        self.flt: Optional[flowfilter.TFilter] = None
 
     def load(self, loader):
         loader.add_option(
-            "stickycookie",
-            Optional[str],
-            None,
-            "Set sticky cookie filter. Matched against requests.",
+            "stickycookie", Optional[str], None,
+            "Set sticky cookie filter. Matched against requests."
         )
 
     def configure(self, updated):
         if "stickycookie" in updated:
             if ctx.options.stickycookie:
-                try:
-                    self.flt = flowfilter.parse(ctx.options.stickycookie)
-                except ValueError as e:
-                    raise exceptions.OptionsError(str(e)) from e
+                flt = flowfilter.parse(ctx.options.stickycookie)
+                if not flt:
+                    raise exceptions.OptionsError(
+                        "stickycookie: invalid filter expression: %s" % ctx.options.stickycookie
+                    )
+                self.flt = flt
             else:
                 self.flt = None
 
@@ -79,19 +74,17 @@ class StickyCookie:
 
     def request(self, flow: http.HTTPFlow):
         if self.flt:
-            cookie_list: list[tuple[str, str]] = []
+            cookie_list: List[Tuple[str, str]] = []
             if flowfilter.match(self.flt, flow):
                 for (domain, port, path), c in self.jar.items():
                     match = [
                         domain_match(flow.request.host, domain),
                         flow.request.port == port,
-                        flow.request.path.startswith(path),
+                        flow.request.path.startswith(path)
                     ]
                     if all(match):
                         cookie_list.extend(c.items())
             if cookie_list:
                 # FIXME: we need to formalise this...
                 flow.metadata["stickycookie"] = True
-                flow.request.headers["cookie"] = cookies.format_cookie_header(
-                    cookie_list
-                )
+                flow.request.headers["cookie"] = cookies.format_cookie_header(cookie_list)

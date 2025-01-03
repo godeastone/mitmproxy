@@ -8,50 +8,29 @@ from mitmproxy import flowfilter
 from mitmproxy import options
 from mitmproxy.exceptions import FlowReadException
 from mitmproxy.io import tnetstring
-from mitmproxy.proxy import layers
-from mitmproxy.proxy import server_hooks
-from mitmproxy.test import taddons
-from mitmproxy.test import tflow
-
-
-class State:
-    def __init__(self):
-        self.flows = []
-
-    def request(self, f):
-        if f not in self.flows:
-            self.flows.append(f)
-
-    def response(self, f):
-        if f not in self.flows:
-            self.flows.append(f)
-
-    def websocket_start(self, f):
-        if f not in self.flows:
-            self.flows.append(f)
+from mitmproxy.test import taddons, tflow
+from . import tservers
 
 
 class TestSerialize:
+
     def test_roundtrip(self):
         sio = io.BytesIO()
         f = tflow.tflow()
-        f.marked = ":default:"
         f.marked = True
-        f.comment = "test comment"
         f.request.content = bytes(range(256))
         w = mitmproxy.io.FlowWriter(sio)
         w.add(f)
 
         sio.seek(0)
         r = mitmproxy.io.FlowReader(sio)
-        lst = list(r.stream())
-        assert len(lst) == 1
+        l = list(r.stream())
+        assert len(l) == 1
 
-        f2 = lst[0]
+        f2 = l[0]
         assert f2.get_state() == f.get_state()
         assert f2.request.data == f.request.data
         assert f2.marked
-        assert f2.comment == "test comment"
 
     def test_filter(self):
         sio = io.BytesIO()
@@ -71,21 +50,20 @@ class TestSerialize:
         assert len(list(r.stream()))
 
     def test_error(self):
-        buf = io.BytesIO()
-        buf.write(b"bogus")
-        buf.seek(0)
-        r = mitmproxy.io.FlowReader(buf)
-        with pytest.raises(FlowReadException, match="Invalid data format"):
+        sio = io.BytesIO()
+        sio.write(b"bogus")
+        sio.seek(0)
+        r = mitmproxy.io.FlowReader(sio)
+        with pytest.raises(FlowReadException, match='Invalid data format'):
             list(r.stream())
 
-        buf = io.BytesIO()
+        sio = io.BytesIO()
         f = tflow.tdummyflow()
-        w = mitmproxy.io.FlowWriter(buf)
+        w = mitmproxy.io.FlowWriter(sio)
         w.add(f)
-
-        buf = io.BytesIO(buf.getvalue().replace(b"dummy", b"nknwn"))
-        r = mitmproxy.io.FlowReader(buf)
-        with pytest.raises(FlowReadException, match="Unknown flow type"):
+        sio.seek(0)
+        r = mitmproxy.io.FlowReader(sio)
+        with pytest.raises(FlowReadException, match='Unknown flow type'):
             list(r.stream())
 
         f = FlowReadException("foo")
@@ -116,39 +94,56 @@ class TestSerialize:
 
 
 class TestFlowMaster:
+    @pytest.mark.asyncio
     async def test_load_http_flow_reverse(self):
-        opts = options.Options(mode=["reverse:https://use-this-domain"])
-        s = State()
+        opts = options.Options(
+            mode="reverse:https://use-this-domain"
+        )
+        s = tservers.TestState()
         with taddons.context(s, options=opts) as ctx:
             f = tflow.tflow(resp=True)
             await ctx.master.load_flow(f)
             assert s.flows[0].request.host == "use-this-domain"
 
+    @pytest.mark.asyncio
+    async def test_load_websocket_flow(self):
+        opts = options.Options(
+            mode="reverse:https://use-this-domain"
+        )
+        s = tservers.TestState()
+        with taddons.context(s, options=opts) as ctx:
+            f = tflow.twebsocketflow()
+            await ctx.master.load_flow(f.handshake_flow)
+            await ctx.master.load_flow(f)
+            assert s.flows[0].request.host == "use-this-domain"
+            assert s.flows[1].handshake_flow == f.handshake_flow
+            assert len(s.flows[1].messages) == len(f.messages)
+
+    @pytest.mark.asyncio
     async def test_all(self):
-        opts = options.Options(mode=["reverse:https://use-this-domain"])
-        s = State()
+        opts = options.Options(
+            mode="reverse:https://use-this-domain"
+        )
+        s = tservers.TestState()
         with taddons.context(s, options=opts) as ctx:
             f = tflow.tflow(req=None)
-            await ctx.master.addons.handle_lifecycle(
-                server_hooks.ClientConnectedHook(f.client_conn)
-            )
+            await ctx.master.addons.handle_lifecycle("clientconnect", f.client_conn)
             f.request = mitmproxy.test.tutils.treq()
-            await ctx.master.addons.handle_lifecycle(layers.http.HttpRequestHook(f))
+            await ctx.master.addons.handle_lifecycle("request", f)
             assert len(s.flows) == 1
 
             f.response = mitmproxy.test.tutils.tresp()
-            await ctx.master.addons.handle_lifecycle(layers.http.HttpResponseHook(f))
+            await ctx.master.addons.handle_lifecycle("response", f)
             assert len(s.flows) == 1
 
-            await ctx.master.addons.handle_lifecycle(
-                server_hooks.ClientDisconnectedHook(f.client_conn)
-            )
+            await ctx.master.addons.handle_lifecycle("clientdisconnect", f.client_conn)
 
             f.error = flow.Error("msg")
-            await ctx.master.addons.handle_lifecycle(layers.http.HttpErrorHook(f))
+            await ctx.master.addons.handle_lifecycle("error", f)
 
 
 class TestError:
+
     def test_getset_state(self):
         e = flow.Error("Error")
         state = e.get_state()

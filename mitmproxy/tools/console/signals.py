@@ -1,66 +1,39 @@
-from __future__ import annotations
-
-from collections.abc import Callable
-from typing import Union
-
-from mitmproxy.utils import signals
-
-StatusMessage = Union[tuple[str, str], str]
+import blinker
 
 
 # Show a status message in the action bar
-# Instead of using this signal directly, consider emitting a log event.
-def _status_message(message: StatusMessage, expire: int = 5) -> None: ...
-
-
-status_message = signals.SyncSignal(_status_message)
-
+status_message = blinker.Signal()
 
 # Prompt for input
-def _status_prompt(
-    prompt: str, text: str | None, callback: Callable[[str], None]
-) -> None: ...
+status_prompt = blinker.Signal()
 
-
-status_prompt = signals.SyncSignal(_status_prompt)
-
+# Prompt for a path
+status_prompt_path = blinker.Signal()
 
 # Prompt for a single keystroke
-def _status_prompt_onekey(
-    prompt: str, keys: list[tuple[str, str]], callback: Callable[[str], None]
-) -> None: ...
-
-
-status_prompt_onekey = signals.SyncSignal(_status_prompt_onekey)
-
+status_prompt_onekey = blinker.Signal()
 
 # Prompt for a command
-def _status_prompt_command(partial: str = "", cursor: int | None = None) -> None: ...
-
-
-status_prompt_command = signals.SyncSignal(_status_prompt_command)
-
+status_prompt_command = blinker.Signal()
 
 # Call a callback in N seconds
-def _call_in(seconds: float, callback: Callable[[], None]) -> None: ...
-
-
-call_in = signals.SyncSignal(_call_in)
+call_in = blinker.Signal()
 
 # Focus the body, footer or header of the main window
-focus = signals.SyncSignal(lambda section: None)
+focus = blinker.Signal()
 
 # Fired when settings change
-update_settings = signals.SyncSignal(lambda: None)
+update_settings = blinker.Signal()
 
 # Fired when a flow changes
-flow_change = signals.SyncSignal(lambda flow: None)
+flow_change = blinker.Signal()
+
+# Fired when the flow list or focus changes
+flowlist_change = blinker.Signal()
 
 # Pop and push view state onto a stack
-pop_view_state = signals.SyncSignal(lambda: None)
-
-# Fired when the window state changes
-window_refresh = signals.SyncSignal(lambda: None)
+pop_view_state = blinker.Signal()
+push_view_state = blinker.Signal()
 
 # Fired when the key bindings change
-keybindings_change = signals.SyncSignal(lambda: None)
+keybindings_change = blinker.Signal()

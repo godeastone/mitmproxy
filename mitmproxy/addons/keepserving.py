@@ -1,24 +1,16 @@
-from __future__ import annotations
-
 import asyncio
-
 from mitmproxy import ctx
-from mitmproxy.utils import asyncio_utils
 
 
 class KeepServing:
-    _watch_task: asyncio.Task | None = None
-
     def load(self, loader):
         loader.add_option(
-            "keepserving",
-            bool,
-            False,
+            "keepserving", bool, False,
             """
             Continue serving after client playback, server playback or file
             read. This option is ignored by interactive tools, which always keep
             serving.
-            """,
+            """
         )
 
     def keepgoing(self) -> bool:
@@ -45,6 +37,4 @@ class KeepServing:
             ctx.options.rfile,
         ]
         if any(opts) and not ctx.options.keepserving:
-            self._watch_task = asyncio_utils.create_task(
-                self.watch(), name="keepserving"
-            )
+            asyncio.get_event_loop().create_task(self.watch())

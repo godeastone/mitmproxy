@@ -1,6 +1,7 @@
+from mitmproxy.test import tflow
+
 from mitmproxy.addons import anticomp
 from mitmproxy.test import taddons
-from mitmproxy.test import tflow
 
 
 class TestAntiComp:

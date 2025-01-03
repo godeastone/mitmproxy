@@ -1,76 +1,44 @@
 # Default view cutoff *in lines*
-from abc import ABC
-from abc import abstractmethod
-from collections.abc import Iterable
-from collections.abc import Iterator
-from collections.abc import Mapping
-from typing import ClassVar
-from typing import Union
-
-from mitmproxy import flow
-from mitmproxy import http
+import typing
 
 KEY_MAX = 30
 
-TTextType = Union[str, bytes]  # FIXME: This should be either bytes or str ultimately.
-TViewLine = list[tuple[str, TTextType]]
-TViewResult = tuple[str, Iterator[TViewLine]]
+TTextType = typing.Union[str, bytes]  # FIXME: This should be either bytes or str ultimately.
+TViewLine = typing.List[typing.Tuple[str, TTextType]]
+TViewResult = typing.Tuple[str, typing.Iterator[TViewLine]]
 
 
-class View(ABC):
-    name: ClassVar[str]
+class View:
+    name: typing.ClassVar[str]
+    content_types: typing.ClassVar[typing.List[str]] = []
 
-    @abstractmethod
-    def __call__(
-        self,
-        data: bytes,
-        *,
-        content_type: str | None = None,
-        flow: flow.Flow | None = None,
-        http_message: http.Message | None = None,
-        **unknown_metadata,
-    ) -> TViewResult:
+    def __call__(self, data: bytes, **metadata) -> TViewResult:
         """
         Transform raw data into human-readable output.
 
-        Returns a (description, content generator) tuple.
-        The content generator yields lists of (style, text) tuples, where each list represents
-        a single line. ``text`` is a unfiltered string which may need to be escaped,
-        depending on the used output. For example, it may contain terminal control sequences
-        or unfiltered HTML.
+        Args:
+            data: the data to decode/format.
+            metadata: optional keyword-only arguments for metadata. Implementations must not
+                rely on a given argument being present.
 
-        Except for `data`, implementations must not rely on any given argument to be present.
-        To ensure compatibility with future mitmproxy versions, unknown keyword arguments should be ignored.
+        Returns:
+            A (description, content generator) tuple.
 
-        The content generator must not yield tuples of tuples, because urwid cannot process that.
-        You have to yield a *list* of tuples per line.
+            The content generator yields lists of (style, text) tuples, where each list represents
+            a single line. ``text`` is a unfiltered byte string which may need to be escaped,
+            depending on the used output.
+
+        Caveats:
+            The content generator must not yield tuples of tuples,
+            because urwid cannot process that. You have to yield a *list* of tuples per line.
         """
         raise NotImplementedError()  # pragma: no cover
 
-    def render_priority(
-        self,
-        data: bytes,
-        *,
-        content_type: str | None = None,
-        flow: flow.Flow | None = None,
-        http_message: http.Message | None = None,
-        **unknown_metadata,
-    ) -> float:
-        """
-        Return the priority of this view for rendering `data`.
-        If no particular view is chosen by the user, the view with the highest priority is selected.
 
-        Except for `data`, implementations must not rely on any given argument to be present.
-        To ensure compatibility with future mitmproxy versions, unknown keyword arguments should be ignored.
-        """
-        return 0
+def format_pairs(
+        items: typing.Iterable[typing.Tuple[TTextType, TTextType]]
+) -> typing.Iterator[TViewLine]:
 
-    def __lt__(self, other):
-        assert isinstance(other, View)
-        return self.name.__lt__(other.name)
-
-
-def format_pairs(items: Iterable[tuple[TTextType, TTextType]]) -> Iterator[TViewLine]:
     """
     Helper function that accepts a list of (k,v) pairs into a list of
     [
@@ -85,16 +53,22 @@ def format_pairs(items: Iterable[tuple[TTextType, TTextType]]) -> Iterator[TView
 
     for key, value in items:
         if isinstance(key, bytes):
+
             key += b":"
         else:
             key += ":"
 
         key = key.ljust(max_key_len + 2)
 
-        yield [("header", key), ("text", value)]
+        yield [
+            ("header", key),
+            ("text", value)
+        ]
 
 
-def format_dict(d: Mapping[TTextType, TTextType]) -> Iterator[TViewLine]:
+def format_dict(
+        d: typing.Mapping[TTextType, TTextType]
+) -> typing.Iterator[TViewLine]:
     """
     Helper function that transforms the given dictionary into a list of
     [
@@ -107,7 +81,7 @@ def format_dict(d: Mapping[TTextType, TTextType]) -> Iterator[TViewLine]:
     return format_pairs(d.items())
 
 
-def format_text(text: TTextType) -> Iterator[TViewLine]:
+def format_text(text: TTextType) -> typing.Iterator[TViewLine]:
     """
     Helper function that transforms bytes into the view output format.
     """

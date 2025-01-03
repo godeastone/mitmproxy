@@ -1,64 +1,59 @@
-from . import full_eval
 from mitmproxy.contentviews import auto
-from mitmproxy.test import tflow
+from mitmproxy.net import http
+from mitmproxy.coretypes import multidict
+from . import full_eval
 
 
 def test_view_auto():
     v = full_eval(auto.ViewAuto())
     f = v(
         b"foo",
+        headers=http.Headers()
     )
     assert f[0] == "Raw"
 
     f = v(
         b"<html></html>",
-        content_type="text/html",
+        headers=http.Headers(content_type="text/html")
     )
     assert f[0] == "HTML"
 
     f = v(
         b"foo",
-        content_type="text/flibble",
+        headers=http.Headers(content_type="text/flibble")
     )
     assert f[0] == "Raw"
 
     f = v(
         b"<xml></xml>",
-        content_type="text/flibble",
+        headers=http.Headers(content_type="text/flibble")
     )
     assert f[0].startswith("XML")
 
     f = v(
         b"<svg></svg>",
-        content_type="image/svg+xml",
+        headers=http.Headers(content_type="image/svg+xml")
     )
     assert f[0].startswith("XML")
 
     f = v(
-        b"{}",
-        content_type="application/acme+json",
-    )
-    assert f[0].startswith("JSON")
-
-    f = v(
         b"verybinary",
-        content_type="image/new-magic-image-format",
+        headers=http.Headers(content_type="image/new-magic-image-format")
     )
     assert f[0] == "Unknown Image"
 
-    f = v(b"\xff" * 30)
-    assert f[0] == "Hexdump"
+    f = v(b"\xFF" * 30)
+    assert f[0] == "Hex"
 
     f = v(
         b"",
+        headers=http.Headers()
     )
     assert f[0] == "No content"
 
-    flow = tflow.tflow()
-    flow.request.query = [("foo", "bar")]
     f = v(
         b"",
-        flow=flow,
-        http_message=flow.request,
+        headers=http.Headers(),
+        query=multidict.MultiDict([("foo", "bar")]),
     )
     assert f[0] == "Query"

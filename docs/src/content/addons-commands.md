@@ -14,6 +14,7 @@ invocations and data returned from commands are checked at runtime. Commands are
 a very powerful construct - for instance, all user interaction in mitmproxy
 console are built by binding commands to keys.
 
+
 ## Simple example
 
 Let's begin with a simple example.
@@ -45,6 +46,7 @@ builtin commands. There are a few things to note about this example:
   included in the built-in help, the command editor in mitmproxy console can
   perform sophisticated completion and error checking, and so forth.
 
+
 ## Working with flows
 
 Since command arguments are typed, we can provide special conveniences for
@@ -60,7 +62,7 @@ and adds a header to every request. The really interesting aspect of this
 example is how users specify flows. Because mitmproxy can inspect the type
 signature, it can expand a text flow selector into a sequence of flows for us
 transparently. This means that the user has the full flexibility of [flow
-filters]({{< relref concepts-filters >}}) available. Let's try it out.
+filters]({{< relref addons-options >}}) available. Let's try it out.
 
 Start by loading the addon into mitmproxy and sending some traffic through so we
 have flows to work with:
@@ -93,6 +95,7 @@ mitmproxy if we plan to use them frequently. Flow selectors combined with
 commands are amazingly powerful, and lets us build and expose re-usable functions
 for operating on flows.
 
+
 ## Paths
 
 Commands can take an arbitrary number of arguments. Let's build on the previous
@@ -110,6 +113,8 @@ command. Try invoking it like this:
 
 Notice that mitmproxy provides tab completion both for the flow specification
 and the path.
+
+
 
 ## Supported Types
 

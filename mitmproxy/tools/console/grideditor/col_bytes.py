@@ -1,5 +1,4 @@
 import urwid
-
 from mitmproxy.tools.console import signals
 from mitmproxy.tools.console.grideditor import base
 from mitmproxy.utils import strutils
@@ -35,15 +34,19 @@ class Display(base.Cell):
 
 class Edit(base.Cell):
     def __init__(self, data: bytes) -> None:
-        d = strutils.bytes_to_escaped_str(data)
-        w = urwid.Edit(edit_text=d, wrap="any", multiline=True)
-        w = urwid.AttrMap(w, "editfield")
+        data = strutils.bytes_to_escaped_str(data)
+        w = urwid.Edit(edit_text=data, wrap="any", multiline=True)
+        w = urwid.AttrWrap(w, "editfield")
         super().__init__(w)
 
     def get_data(self) -> bytes:
-        txt = self._w.base_widget.get_text()[0].strip()
+        txt = self._w.get_text()[0].strip()
         try:
             return strutils.escaped_str_to_bytes(txt)
         except ValueError:
-            signals.status_message.send(message="Invalid data.")
+            signals.status_message.send(
+                self,
+                message="Invalid data.",
+                expire=1000
+            )
             raise

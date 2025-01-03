@@ -1,5 +1,4 @@
 import pytest
-
 from mitmproxy.contentviews import base
 
 

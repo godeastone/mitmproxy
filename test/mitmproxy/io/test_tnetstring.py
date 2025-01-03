@@ -1,14 +1,13 @@
-import io
-import math
-import random
-import struct
 import unittest
+import random
+import math
+import io
+import struct
 
 from mitmproxy.io import tnetstring
 
-MAXINT = 2 ** (struct.Struct("i").size * 8 - 1) - 1
+MAXINT = 2 ** (struct.Struct('i').size * 8 - 1) - 1
 
-# fmt: off
 FORMAT_EXAMPLES = {
     b'0:}': {},
     b'0:]': [],
@@ -27,7 +26,6 @@ FORMAT_EXAMPLES = {
     b'18:3:0.1^3:0.2^3:0.3^]': [0.1, 0.2, 0.3],
     b'243:238:233:228:223:218:213:208:203:198:193:188:183:178:173:168:163:158:153:148:143:138:133:128:123:118:113:108:103:99:95:91:87:83:79:75:71:67:63:59:55:51:47:43:39:35:31:27:23:19:15:11:hello-there,]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]': [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[b'hello-there']]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]  # noqa
 }
-# fmt: on
 
 
 def get_random_object(random=random, depth=0):
@@ -38,10 +36,10 @@ def get_random_object(random=random, depth=0):
         what = random.randint(0, 1)
         if what == 0:
             n = random.randint(0, 10)
-            lst = []
+            l = []
             for _ in range(n):
-                lst.append(get_random_object(random, depth + 1))
-            return lst
+                l.append(get_random_object(random, depth + 1))
+            return l
         if what == 1:
             n = random.randint(0, 10)
             d = {}
@@ -64,69 +62,71 @@ def get_random_object(random=random, depth=0):
             else:
                 return -1 * random.randint(0, MAXINT)
         n = random.randint(0, 100)
-        return bytes(random.randint(32, 126) for _ in range(n))
+        return bytes([random.randint(32, 126) for _ in range(n)])
 
 
 class Test_Format(unittest.TestCase):
+
     def test_roundtrip_format_examples(self):
         for data, expect in FORMAT_EXAMPLES.items():
             self.assertEqual(expect, tnetstring.loads(data))
-            self.assertEqual(expect, tnetstring.loads(tnetstring.dumps(expect)))
-            self.assertEqual((expect, b""), tnetstring.pop(memoryview(data)))
+            self.assertEqual(
+                expect, tnetstring.loads(tnetstring.dumps(expect)))
+            self.assertEqual((expect, b''), tnetstring.pop(data))
 
     def test_roundtrip_format_random(self):
-        for _ in range(10):
+        for _ in range(500):
             v = get_random_object()
             self.assertEqual(v, tnetstring.loads(tnetstring.dumps(v)))
-            self.assertEqual((v, b""), tnetstring.pop(memoryview(tnetstring.dumps(v))))
+            self.assertEqual((v, b""), tnetstring.pop(tnetstring.dumps(v)))
 
     def test_roundtrip_format_unicode(self):
-        for _ in range(10):
+        for _ in range(500):
             v = get_random_object()
             self.assertEqual(v, tnetstring.loads(tnetstring.dumps(v)))
-            self.assertEqual((v, b""), tnetstring.pop(memoryview(tnetstring.dumps(v))))
+            self.assertEqual((v, b''), tnetstring.pop(tnetstring.dumps(v)))
 
     def test_roundtrip_big_integer(self):
-        # Recent Python versions do not like ints above 4300 digits, https://github.com/python/cpython/issues/95778
-        i1 = math.factorial(1557)
+        i1 = math.factorial(30000)
         s = tnetstring.dumps(i1)
         i2 = tnetstring.loads(s)
         self.assertEqual(i1, i2)
 
 
 class Test_FileLoading(unittest.TestCase):
+
     def test_roundtrip_file_examples(self):
         for data, expect in FORMAT_EXAMPLES.items():
             s = io.BytesIO()
             s.write(data)
-            s.write(b"OK")
+            s.write(b'OK')
             s.seek(0)
             self.assertEqual(expect, tnetstring.load(s))
-            self.assertEqual(b"OK", s.read())
+            self.assertEqual(b'OK', s.read())
             s = io.BytesIO()
             tnetstring.dump(expect, s)
-            s.write(b"OK")
+            s.write(b'OK')
             s.seek(0)
             self.assertEqual(expect, tnetstring.load(s))
-            self.assertEqual(b"OK", s.read())
+            self.assertEqual(b'OK', s.read())
 
     def test_roundtrip_file_random(self):
-        for _ in range(10):
+        for _ in range(500):
             v = get_random_object()
             s = io.BytesIO()
             tnetstring.dump(v, s)
-            s.write(b"OK")
+            s.write(b'OK')
             s.seek(0)
             self.assertEqual(v, tnetstring.load(s))
-            self.assertEqual(b"OK", s.read())
+            self.assertEqual(b'OK', s.read())
 
     def test_error_on_absurd_lengths(self):
         s = io.BytesIO()
-        s.write(b"1000000000000:pwned!,")
+        s.write(b'1000000000:pwned!,')
         s.seek(0)
         with self.assertRaises(ValueError):
             tnetstring.load(s)
-        self.assertEqual(s.read(1), b":")
+        self.assertEqual(s.read(1), b':')
 
 
 def suite():

@@ -1,30 +1,22 @@
-import logging
 import re
-from collections.abc import Sequence
+import typing
 
-from mitmproxy import ctx
-from mitmproxy import exceptions
-from mitmproxy.addons.modifyheaders import ModifySpec
-from mitmproxy.addons.modifyheaders import parse_modify_spec
-from mitmproxy.log import ALERT
-
-logger = logging.getLogger(__name__)
+from mitmproxy import ctx, exceptions
+from mitmproxy.addons.modifyheaders import parse_modify_spec, ModifySpec
 
 
 class ModifyBody:
-    def __init__(self) -> None:
-        self.replacements: list[ModifySpec] = []
+    def __init__(self):
+        self.replacements: typing.List[ModifySpec] = []
 
     def load(self, loader):
         loader.add_option(
-            "modify_body",
-            Sequence[str],
-            [],
+            "modify_body", typing.Sequence[str], [],
             """
             Replacement pattern of the form "[/flow-filter]/regex/[@]replacement", where
             the separator can be any character. The @ allows to provide a file path that
             is used to read the replacement string.
-            """,
+            """
         )
 
     def configure(self, updated):
@@ -34,33 +26,17 @@ class ModifyBody:
                 try:
                     spec = parse_modify_spec(option, True)
                 except ValueError as e:
-                    raise exceptions.OptionsError(
-                        f"Cannot parse modify_body option {option}: {e}"
-                    ) from e
+                    raise exceptions.OptionsError(f"Cannot parse modify_body option {option}: {e}") from e
 
                 self.replacements.append(spec)
 
-        stream_and_modify_conflict = (
-            ctx.options.modify_body
-            and ctx.options.stream_large_bodies
-            and ("modify_body" in updated or "stream_large_bodies" in updated)
-        )
-        if stream_and_modify_conflict:
-            logger.log(
-                ALERT,
-                "Both modify_body and stream_large_bodies are active. "
-                "Streamed bodies will not be modified.",
-            )
-
     def request(self, flow):
-        if flow.response or flow.error or not flow.live:
-            return
-        self.run(flow)
+        if not flow.reply.has_message:
+            self.run(flow)
 
     def response(self, flow):
-        if flow.error or not flow.live:
-            return
-        self.run(flow)
+        if not flow.reply.has_message:
+            self.run(flow)
 
     def run(self, flow):
         for spec in self.replacements:
@@ -68,16 +44,9 @@ class ModifyBody:
                 try:
                     replacement = spec.read_replacement()
                 except OSError as e:
-                    logging.warning(f"Could not read replacement file: {e}")
+                    ctx.log.warn(f"Could not read replacement file: {e}")
                     continue
                 if flow.response:
-                    flow.response.content = re.sub(
-                        spec.subject,
-                        replacement,
-                        flow.response.content,
-                        flags=re.DOTALL,
-                    )
+                    flow.response.content = re.sub(spec.subject, replacement, flow.response.content, flags=re.DOTALL)
                 else:
-                    flow.request.content = re.sub(
-                        spec.subject, replacement, flow.request.content, flags=re.DOTALL
-                    )
+                    flow.request.content = re.sub(spec.subject, replacement, flow.request.content, flags=re.DOTALL)

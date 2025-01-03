@@ -18,8 +18,9 @@ and many of the built-in argument types - give it a try.
 The canonical reference for commands is the `--commands` flag, which is exposed
 by each of the mitmproxy tools. Passing this flag will dump an annotated list of
 all registered commands, their arguments and their return values to screen. In
-mitmproxy console you can also view a palette of all commands in the command
+mimtproxy console you can also view a palette of all commands in the command
 browser (by default accessible with the `C` key binding).
+
 
 # Working with Flows
 
@@ -29,6 +30,7 @@ signature for the client replay commands looks like this:
 ```
 replay.client [flow]
 ```
+
 
 That means that it expects a sequence of one or more flows. This is where [flow
 specifications]({{< relref concepts-filters >}}) come in - mitmproxy will

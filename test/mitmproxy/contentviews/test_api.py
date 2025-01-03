@@ -1,20 +1,16 @@
 from unittest import mock
-
 import pytest
 
 from mitmproxy import contentviews
-from mitmproxy.test import tflow
+from mitmproxy.exceptions import ContentViewException
+from mitmproxy.net.http import Headers
 from mitmproxy.test import tutils
+from mitmproxy.test import tflow
 
 
 class TestContentView(contentviews.View):
     name = "test"
-
-    def __call__(self, *args, **kwargs):
-        pass
-
-    def should_render(self, content_type):
-        return content_type == "test/123"
+    content_types = ["test/123"]
 
 
 def test_add_remove():
@@ -23,7 +19,7 @@ def test_add_remove():
     assert tcv in contentviews.views
 
     # repeated addition causes exception
-    with pytest.raises(ValueError, match="Duplicate view"):
+    with pytest.raises(ContentViewException, match="Duplicate view"):
         contentviews.add(tcv)
 
     contentviews.remove(tcv)
@@ -42,7 +38,7 @@ def test_get_content_view():
     desc, lines, err = contentviews.get_content_view(
         contentviews.get("Auto"),
         b"[1, 2, 3]",
-        content_type="application/json",
+        headers=Headers(content_type="application/json")
     )
     assert desc == "JSON"
     assert list(lines)
@@ -80,18 +76,6 @@ def test_get_message_content_view():
     r.headers["content-encoding"] = "deflate"
     desc, lines, err = contentviews.get_message_content_view("raw", r, f)
     assert desc == "[cannot decode] Raw"
-
-    del r.headers["content-encoding"]
-    r.headers["content-type"] = "multipart/form-data; boundary=AaB03x"
-    r.content = b"""
---AaB03x
-Content-Disposition: form-data; name="submit-name"
-
-Larry
---AaB03x
-        """.strip()
-    desc, lines, err = contentviews.get_message_content_view("multipart form", r, f)
-    assert desc == "Multipart form"
 
     r.content = None
     desc, lines, err = contentviews.get_message_content_view("raw", r, f)

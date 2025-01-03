@@ -1,25 +1,19 @@
-import asyncio
+from mitmproxy.tools.web import master
+from mitmproxy import options
 
 import pytest
 
-from mitmproxy.options import Options
-from mitmproxy.tools.web.master import WebMaster
+from ... import tservers
 
 
-async def test_reuse():
-    async def handler(r, w):
-        pass
+class TestWebMaster(tservers.MasterTest):
+    def mkmaster(self, **opts):
+        o = options.Options(**opts)
+        return master.WebMaster(o)
 
-    server = await asyncio.start_server(
-        handler, host="127.0.0.1", port=0, reuse_address=False
-    )
-    port = server.sockets[0].getsockname()[1]
-    master = WebMaster(Options(), with_termlog=False)
-    master.options.web_host = "127.0.0.1"
-    master.options.web_port = port
-    with pytest.raises(OSError, match=f"--set web_port={port + 2}"):
-        await master.running()
-    server.close()
-    # tornado registers some callbacks,
-    # we want to run them to avoid fatal warnings.
-    await asyncio.sleep(0)
+    @pytest.mark.asyncio
+    async def test_basic(self):
+        m = self.mkmaster()
+        for i in (1, 2, 3):
+            await self.dummy_cycle(m, 1, b"")
+            assert len(m.view) == i

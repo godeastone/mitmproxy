@@ -1,50 +1,38 @@
-from __future__ import annotations
-
-import asyncio
-import logging
 import sys
-from typing import IO
+import click
 
-from mitmproxy import ctx
 from mitmproxy import log
-from mitmproxy.utils import vt_codes
+from mitmproxy import ctx
+
+# These get over-ridden by the save execution context. Keep them around so we
+# can log directly.
+realstdout = sys.stdout
+realstderr = sys.stderr
 
 
 class TermLog:
-    _teardown_task: asyncio.Task | None = None
-
-    def __init__(self, out: IO[str] | None = None):
-        self.logger = TermLogHandler(out)
-        self.logger.install()
+    def __init__(self, outfile=None):
+        self.outfile = outfile
 
     def load(self, loader):
         loader.add_option(
-            "termlog_verbosity", str, "info", "Log verbosity.", choices=log.LogLevels
+            "termlog_verbosity", str, 'info',
+            "Log verbosity.",
+            choices=log.LogTierOrder
         )
-        self.logger.setLevel(logging.INFO)
 
-    def configure(self, updated):
-        if "termlog_verbosity" in updated:
-            self.logger.setLevel(ctx.options.termlog_verbosity.upper())
+    def log(self, e):
+        if log.log_tier(e.level) == log.log_tier("error"):
+            outfile = self.outfile or realstderr
+        else:
+            outfile = self.outfile or realstdout
 
-    def uninstall(self) -> None:
-        # uninstall the log dumper.
-        # This happens at the very very end after done() is completed,
-        # because we don't want to uninstall while other addons are still logging.
-        self.logger.uninstall()
-
-
-class TermLogHandler(log.MitmLogHandler):
-    def __init__(self, out: IO[str] | None = None):
-        super().__init__()
-        self.file: IO[str] = out or sys.stdout
-        self.has_vt_codes = vt_codes.ensure_supported(self.file)
-        self.formatter = log.MitmFormatter(self.has_vt_codes)
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            print(self.format(record), file=self.file)
-        except OSError:
-            # We cannot print, exit immediately.
-            # See https://github.com/mitmproxy/mitmproxy/issues/4669
-            sys.exit(1)
+        if log.log_tier(ctx.options.termlog_verbosity) >= log.log_tier(e.level):
+            click.secho(
+                e.msg,
+                file=outfile,
+                fg=dict(error="red", warn="yellow",
+                        alert="magenta").get(e.level),
+                dim=(e.level == "debug"),
+                err=(e.level == "error")
+            )

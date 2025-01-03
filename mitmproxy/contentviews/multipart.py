@@ -1,35 +1,19 @@
-from .. import http
-from . import base
+from mitmproxy.net import http
 from mitmproxy.coretypes import multidict
-from mitmproxy.net.http import multipart
+from . import base
 
 
 class ViewMultipart(base.View):
     name = "Multipart Form"
+    content_types = ["multipart/form-data"]
 
     @staticmethod
     def _format(v):
         yield [("highlight", "Form data:\n")]
         yield from base.format_dict(multidict.MultiDict(v))
 
-    def __call__(
-        self,
-        data: bytes,
-        content_type: str | None = None,
-        http_message: http.Message | None = None,
-        **metadata,
-    ):
-        # The content_type doesn't have the boundary, so we get it from the header again
-        headers = getattr(http_message, "headers", None)
-        if headers:
-            content_type = headers.get("content-type")
-        if content_type is None:
-            return
-        v = multipart.decode_multipart(content_type, data)
+    def __call__(self, data, **metadata):
+        headers = metadata.get("headers", {})
+        v = http.multipart.decode(headers, data)
         if v:
             return "Multipart form", self._format(v)
-
-    def render_priority(
-        self, data: bytes, *, content_type: str | None = None, **metadata
-    ) -> float:
-        return float(bool(data) and content_type == "multipart/form-data")

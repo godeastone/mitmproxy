@@ -1,4 +1,3 @@
-import re
 import sys
 
 DEPRECATED = """
@@ -16,6 +15,7 @@ DEPRECATED = """
 --no-http2-priority
 --no-websocket
 --websocket
+--spoof-source-address
 --upstream-bind-address
 --ciphers-client
 --ciphers-server
@@ -60,7 +60,6 @@ REPLACED = """
 -f
 --filter
 --socks
---server-replay-nopop
 """
 
 REPLACEMENTS = {
@@ -71,12 +70,13 @@ REPLACEMENTS = {
     "--order": "view_order",
     "--no-mouse": "console_mouse",
     "--reverse": "view_order_reversed",
+    "--no-http2-priority": "http2_priority",
     "--no-websocket": "websocket",
     "--no-upstream-cert": "upstream_cert",
     "--upstream-trusted-confdir": "ssl_verify_upstream_trusted_confdir",
     "--upstream-trusted-ca": "ssl_verify_upstream_trusted_ca",
     "--no-onboarding": "onboarding",
-    "--no-pop": "server_replay_reuse",
+    "--no-pop": "server_replay_nopop",
     "--replay-ignore-content": "server_replay_ignore_content",
     "--replay-ignore-payload-param": "server_replay_ignore_payload_params",
     "--replay-ignore-param": "server_replay_ignore_params",
@@ -97,13 +97,12 @@ REPLACEMENTS = {
     "--cert": "--certs",
     "--insecure": "--ssl-insecure",
     "-c": "-C",
-    "--replace": ["--modify-body", "--modify-headers"],
+    "--replace": "--replacements",
     "--replacements": ["--modify-body", "--modify-headers"],
     "-i": "--intercept",
     "-f": "--view-filter",
     "--filter": "--view-filter",
-    "--socks": "--mode socks5",
-    "--server-replay-nopop": "--server-replay-reuse",
+    "--socks": "--mode socks5"
 }
 
 
@@ -123,24 +122,24 @@ def check():
     for option in ("--nonanonymous", "--singleuser", "--htpasswd"):
         if option in args:
             print(
-                "{} is deprecated.\n"
-                "Please use `--proxyauth SPEC` instead.\n"
+                '{} is deprecated.\n'
+                'Please use `--proxyauth SPEC` instead.\n'
                 'SPEC Format: "username:pass", "any" to accept any user/pass combination,\n'
                 '"@path" to use an Apache htpasswd file, or\n'
-                '"ldap[s]:url_server_ldap[:port]:dn_auth:password:dn_subtree[?search_filter_key=...]" '
-                "for LDAP authentication.".format(option)
-            )
+                '"ldap[s]:url_server_ldap:dn_auth:password:dn_subtree" '
+                'for LDAP authentication.'.format(option))
 
     for option in REPLACED.splitlines():
         if option in args:
-            r = REPLACEMENTS.get(option)
-            if isinstance(r, list):
-                new_options = r
+            if isinstance(REPLACEMENTS.get(option), list):
+                new_options = REPLACEMENTS.get(option)
             else:
-                new_options = [r]
+                new_options = [REPLACEMENTS.get(option)]
             print(
-                "{} is deprecated.\n" "Please use `{}` instead.".format(
-                    option, "` or `".join(new_options)
+                "{} is deprecated.\n"
+                "Please use `{}` instead.".format(
+                    option,
+                    "` or `".join(new_options)
                 )
             )
 
@@ -151,17 +150,6 @@ def check():
                 "Please use `--set {}=value` instead.\n"
                 "To show all options and their default values use --options".format(
                     option,
-                    REPLACEMENTS.get(option, None)
-                    or option.lstrip("-").replace("-", "_"),
-                )
-            )
-
-    # Check for underscores in the options. Options always follow '--'.
-    for argument in args:
-        underscoreParam = re.search(r"[-]{2}((.*?_)(.*?(\s|$)))+", argument)
-        if underscoreParam is not None:
-            print(
-                "{} uses underscores, please use hyphens {}".format(
-                    argument, argument.replace("_", "-")
+                    REPLACEMENTS.get(option, None) or option.lstrip("-").replace("-", "_")
                 )
             )

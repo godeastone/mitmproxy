@@ -1,15 +1,15 @@
-@import (reference) "../../node_modules/bootstrap/less/variables.less";
-@import (reference) "../../node_modules/bootstrap/less/mixins/grid.less";
+@import (reference) '../../node_modules/bootstrap/less/variables.less';
+@import (reference) '../../node_modules/bootstrap/less/mixins/grid.less';
 @import (reference) "../../node_modules/bootstrap/less/mixins/labels.less";
 @import (reference) "../../node_modules/bootstrap/less/labels.less";
 
-@menu-height: 95px;
+@menu-height: 85px;
 
 header {
     padding-top: 6px;
     background-color: white;
     @separator-color: lighten(grey, 15%);
-    > div:not(:empty) {
+    > div {
         display: block;
         margin: 0;
         padding: 0;
@@ -20,22 +20,19 @@ header {
 }
 
 @menu-legend-height: 16px;
-@menu-group-hmargin: 5px;
+@menu-group-hmargin: 3px;
 .menu-group {
-    margin: 0 @menu-group-hmargin 0 (@menu-group-hmargin + 1px);
+    margin: 0 @menu-group-hmargin;
     display: inline-block;
     height: @menu-height;
+    vertical-align: top;
 }
 
 .menu-content {
     height: @menu-height - @menu-legend-height;
-    display: flow-root;
+    text-align: center;
 
-    > a {
-        display: inline-block;
-    }
-    > .btn,
-    > a > .btn {
+    > .btn {
         height: @menu-height - @menu-legend-height;
         text-align: center;
         margin: 0 1px;
@@ -48,21 +45,11 @@ header {
             margin: 0 auto 5px;
         }
     }
-
-    > .btn.btn-sm {
-        height: ((@menu-height - @menu-legend-height) / 3);
-        padding: 0 5px;
-        i {
-            display: inline-block;
-            font-size: 14px;
-            margin: 0;
-        }
-    }
 }
 
 .menu-entry {
     text-align: left;
-    height: ((@menu-height - @menu-legend-height) / 3);
+    height: (@menu-height - @menu-legend-height)/3;
     line-height: 1;
     padding: 0.5rem 1rem;
 
@@ -71,14 +58,13 @@ header {
         font-weight: normal;
         margin: 0;
     }
-    input[type="checkbox"] {
+    input[type=checkbox] {
         margin: 0 2px;
         vertical-align: middle;
     }
 }
 
 .menu-legend {
-    color: #777;
     height: @menu-legend-height;
     text-align: center;
     font-size: 12px;
@@ -87,7 +73,7 @@ header {
 
 .menu-group + .menu-group:before {
     @space: 10px;
-    margin-left: -(@menu-group-hmargin + 1px);
+    margin-left: -@menu-group-hmargin;
     content: " ";
     border-left: solid 1px lighten(grey, 40%);
     margin-top: @space;
@@ -96,18 +82,26 @@ header {
 }
 
 @menu-main-gutter-width: 5px;
-.main-menu {
-    display: flex;
-    .menu-group {
-        width: 50%;
-    }
-    .btn-sm {
-        margin-top: 6px;
-    }
+.menu-main {
+    .make-row(@menu-main-gutter-width);
+    padding: 2px 5px;
 }
 
 .filter-input {
-    margin: 4px 0;
+    .make-sm-column(5, @menu-main-gutter-width);
+    padding: 2.5px;
+
+    @media (max-width: @screen-xs-max) {
+
+        padding: 2px 2.5px;
+
+        > .form-control, > .input-group-addon, > .input-group-btn > .btn {
+            height: 23.5px;
+            padding: 1px 5px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+    }
 }
 
 .filter-input .popover {
@@ -118,6 +112,7 @@ header {
     opacity: 0.9;
 
     @media (max-width: @screen-xs-max) {
+
         top: 16px;
         left: 29px;
         right: 2px;
@@ -143,8 +138,7 @@ header {
     opacity: 1;
     transition: all 1s linear;
 
-    &.init,
-    &.fetching {
+    &.init, &.fetching {
         background-color: @label-info-bg;
     }
     &.established {

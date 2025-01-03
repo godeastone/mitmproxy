@@ -7,89 +7,85 @@ menu:
 
 # Protocols
 
-mitmproxy not only supports HTTP, but also other important web protocols.
-This page lists details and known limitations of the respective protocol implementations.
-Most protocols can be disabled by toggling the respective [option]({{< relref concepts-options >}}).
+## HTTP/1.0 and HTTP/1.1
 
-## HTTP/1
+[RFC7230: HTTP/1.1: Message Syntax and Routing](http://tools.ietf.org/html/rfc7230)
 
-HTTP/1.0 and HTTP/1.1 support in mitmproxy is based on our custom HTTP stack based on 
-[h11](https://github.com/python-hyper/h11), which is particularly robust to HTTP syntax
-errors. Protocol violations are often deliberately forwarded or inserted at the proxy.
+[RFC7231: HTTP/1.1: Semantics and Content](http://tools.ietf.org/html/rfc7231)
 
-##### Known Limitations
+HTTP/1.0 and HTTP/1.1 support in mitmproxy is based on our custom HTTP stack,
+which takes care of all semantics and on-the-wire parsing/serialization tasks.
 
-- Trailers: mitmproxy currently does not support trailers with HTTP/1.x, but we are happy to accept contributions.
+mitmproxy currently does not support parsing HTTP trailers - but if you want to send
+us a PR, we promise to take look!
 
 ## HTTP/2
 
-HTTP/2 support in mitmproxy is based on [hyper-h2](https://github.com/python-hyper/hyper-h2). In case the upstream
-server does not speak HTTP/2, mitmproxy seamlessly translates messages to HTTP/1.
+[RFC7540: Hypertext Transfer Protocol Version 2 (HTTP/2)](http://tools.ietf.org/html/rfc7540>)
 
-##### Known Limitations
+HTTP/2 support in mitmproxy is based on
+[hyper-h2](https://github.com/python-hyper/hyper-h2). It fully encapsulates the
+internal state of HTTP/2 connections and provides an easy-to-use event-based
+API. mitmproxy supports the majority of HTTP/2 feature and tries to
+transparently pass-through as much information as possible.
 
-- *Priority Information*: mitmproxy currently ignores HTTP/2 PRIORITY frames. This does not affect the transmitted
-  contents, but potentially affects the order in which messages are sent.
-- *Push Promises*: mitmproxy currently does not advertise support for HTTP/2 Push Promises.
-- *Cleartext HTTP/2*: mitmproxy currently does not support unencrypted HTTP/2 (h2c).
+mitmproxy currently does not support HTTP/2 Cleartext (h2c) since none of the
+major browser vendors have implemented it.
 
-## HTTP/3
+Some websites are still having problems with correct HTTP/2 support in their
+webservers and can cause errors, dropped connections, or simply no response at
+all. We are trying to be as tolerant and forgiving as possible with the types of
+data we send and receive, but
+[some](https://github.com/mitmproxy/mitmproxy/issues/1745)
+[faulty](https://github.com/mitmproxy/mitmproxy/issues/2823)
+[implementations](https://github.com/mitmproxy/mitmproxy/issues/1824)
+[simply](https://github.com/mitmproxy/mitmproxy/issues/1891) don't work well
+with mitmproxy.
 
-HTTP/3 support in mitmproxy is based on [aioquic](https://github.com/aiortc/aioquic). Mitmproxy's HTTP/3 functionality
-is still experimental and only available in reverse proxy mode.
-
-##### Known Limitations
-
-- *Replay*: Client Replay is currently broken.
-- *Supported Versions*: mitmproxy currently only supports QUIC Version 1. Version 2 (RFC 9369) is not supported yet.
-- *Implementation Compatibility*: mitmproxy's HTTP/3 support has only been extensively tested with cURL.
-  Other implementations are likely to exhibit bugs.
+In order to increase the compatibility of mitmproxy with HTTP/2 webservers, we
+default to NOT forward any priority information that is sent by a client. You
+can enable it with: `http2_priority=true`.
 
 ## WebSocket
 
-WebSocket support in mitmproxy is based on [wsproto](https://github.com/python-hyper/wsproto) project, including support
-for message compression.
+[RFC6455: The WebSocket Protocol](http://tools.ietf.org/html/rfc6455)
 
-##### Known Limitations
+[RFC7692: Compression Extensions for WebSocket](http://tools.ietf.org/html/rfc7692)
 
-- *Replay*: Client or server replay is not possible yet.
-- *Ping*: mitmproxy will forward PING and PONG frames, but not store them. The payload is only logged to the event log.
-- *Unknown Extensions*: Unknown WebSocket extensions will cause a warning message to be logged, but are otherwise passed
-  through as-is. This may lead to noncompliant behavior.
+WebSocket support in mitmproxy is based on [wsproto](https://github.com/python-hyper/wsproto) project. It fully encapsulates
+WebSocket frames/messages/connections and provides an easy-to-use event-based
+API.
 
-## DNS
+mitmproxy fully supports the compression extension for WebSocket messages,
+provided by wsproto. Message contents are automatically compressed and
+decompressed before firing events.
 
-DNS support in mitmproxy is based on a custom DNS implementation.
+mitmproxy currently does not display WebSocket messages in the console or web
+UI. Only the WebSocket handshake flow is shown, which contains a reference to
+the parent flow for all messages exchanged over this connection.
 
-##### Known Limitations
+If an endpoint sends a PING to mitmproxy, a PONG will be sent back immediately
+(with the same payload if present). To keep the other connection alive, a new
+PING (without a payload) is sent to the other endpoint. Unsolicited PONG's are
+not forwarded. All PING's and PONG's are logged (with payload if present).
 
-- *Replay*: Client or server replay is not possible yet.
-- mitmproxy current does not support DNS over TCP.
-- We have not started any work on DoT/DoH/DoQ (DNS-over-TLS/HTTPS/QUIC) yet. Contributions are welcome.
-- We have not started any work on stripping ESNI or HTTPS RR records yet. Contributions are welcome.
+Please note that message interception, modification or replay are not possible yet.
 
-## Generic TCP/TLS Proxy
+## Raw TCP / TCP Proxy / Fallback
 
-Mitmproxy can also act as a generic TCP proxy. In this mode, mitmproxy will still detect the presence of TLS at the
-beginning of a connection and perform a man-in-the-middle attack if necessary, but otherwise forward messages
-unmodified.
+In case mitmproxy does not handle a specific protocol, you can exempt
+hostnames from processing, so that mitmproxy acts as a generic TCP forwarder.
+This feature is closely related to the *passthrough* functionality,
+but differs in two important aspects:
 
-Users can explicitly opt into generic TCP proxying by setting the [`tcp_hosts` option]({{< relref concepts-options >}}).
+  * The raw TCP messages are printed to the event log.
+  * SSL connections will be intercepted.
 
-##### Known Limitations
+Please note that message interception, modification or replay are not possible yet. If
+you are not interested in the raw TCP messages, you should use the ignore
+domains feature.
 
-- *Replay*: Client or server replay is not possible yet.
-- *Opportunistic TLS*: mitmproxy will not detect when a plaintext protocol upgrades to TLS (STARTTLS).
-
-
-## Generic UDP/DTLS Proxy
-
-Mitmproxy can also act as a generic UDP proxy. In this mode, mitmproxy will still detect the presence of DTLS at the
-beginning of a connection and perform a man-in-the-middle attack if necessary, but otherwise forward messages
-unmodified.
-
-Users can explicitly opt into generic UDP proxying by setting the [`udp_hosts` option]({{< relref concepts-options >}}).
-
-##### Known Limitations
-
-- *Replay*: Client or server replay is not possible yet.
+|                    |                    |
+| ------------------ | ------------------ |
+| command-line alias | `--tcp HOST`       |
+| mitmproxy shortcut | press `O` then `T` |

@@ -1,25 +1,40 @@
-FROM python:3.13-bookworm AS wheelbuilder
+FROM alpine:3.12
 
-COPY mitmproxy-*-py3-none-any.whl /wheels/
-RUN pip install wheel && pip wheel --wheel-dir /wheels /wheels/*.whl
+ENV LANG=en_US.UTF-8
 
-FROM python:3.13-slim-bookworm
+ARG WHEEL_MITMPROXY
+ARG WHEEL_BASENAME_MITMPROXY
 
-RUN useradd -mU mitmproxy
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu nano \
-    && rm -rf /var/lib/apt/lists/*
+COPY $WHEEL_MITMPROXY /home/mitmproxy/
 
-RUN mkdir /home/mitmproxy/.mitmproxy \
-    && chown mitmproxy:mitmproxy /home/mitmproxy/.mitmproxy
-
-COPY --from=wheelbuilder /wheels /wheels
-RUN pip install --no-index --find-links=/wheels mitmproxy
-RUN rm -rf /wheels
+# Add our user first to make sure the ID get assigned consistently,
+# regardless of whatever dependencies get added.
+RUN addgroup -S mitmproxy && adduser -S -G mitmproxy mitmproxy \
+    && apk add --no-cache \
+        su-exec \
+        git \
+        g++ \
+        libffi \
+        libffi-dev \
+        libstdc++ \
+        openssl \
+        openssl-dev \
+        python3 \
+        python3-dev \
+    && python3 -m ensurepip --upgrade \
+    && pip3 install -U pip \
+    && LDFLAGS=-L/lib pip3 install -U /home/mitmproxy/${WHEEL_BASENAME_MITMPROXY} \
+    && apk del --purge \
+        git \
+        g++ \
+        libffi-dev \
+        openssl-dev \
+        python3-dev \
+    && rm -rf ~/.cache/pip /home/mitmproxy/${WHEEL_BASENAME_MITMPROXY}
 
 VOLUME /home/mitmproxy/.mitmproxy
 
-COPY docker-entrypoint.sh /usr/local/bin/
+COPY release/docker/docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 8080 8081

@@ -1,20 +1,20 @@
 import re
+import sys
 import time
 import typing
-from collections.abc import Iterable
 
-from mitmproxy.http import Headers
-from mitmproxy.http import Request
-from mitmproxy.http import Response
+from mitmproxy import exceptions
+from mitmproxy.net.http import headers
+from mitmproxy.net.http import request
+from mitmproxy.net.http import response
 from mitmproxy.net.http import url
-from mitmproxy.net.http import validate
 
 
 def get_header_tokens(headers, key):
     """
-    Retrieve all tokens for a header key. A number of different headers
-    follow a pattern where each header line can containe comma-separated
-    tokens, and headers can be set multiple times.
+        Retrieve all tokens for a header key. A number of different headers
+        follow a pattern where each header line can containe comma-separated
+        tokens, and headers can be set multiple times.
     """
     if key not in headers:
         return []
@@ -22,12 +22,143 @@ def get_header_tokens(headers, key):
     return [token.strip() for token in tokens]
 
 
+def read_request(rfile, body_size_limit=None):
+    request = read_request_head(rfile)
+    expected_body_size = expected_http_body_size(request)
+    request.data.content = b"".join(read_body(rfile, expected_body_size, limit=body_size_limit))
+    request.timestamp_end = time.time()
+    return request
+
+
+def read_request_head(rfile):
+    """
+    Parse an HTTP request head (request line + headers) from an input stream
+
+    Args:
+        rfile: The input stream
+
+    Returns:
+        The HTTP request object (without body)
+
+    Raises:
+        exceptions.HttpReadDisconnect: No bytes can be read from rfile.
+        exceptions.HttpSyntaxException: The input is malformed HTTP.
+        exceptions.HttpException: Any other error occurred.
+    """
+    timestamp_start = time.time()
+    if hasattr(rfile, "reset_timestamps"):
+        rfile.reset_timestamps()
+
+    host, port, method, scheme, authority, path, http_version = _read_request_line(rfile)
+    headers = _read_headers(rfile)
+
+    if hasattr(rfile, "first_byte_timestamp"):
+        # more accurate timestamp_start
+        timestamp_start = rfile.first_byte_timestamp
+
+    return request.Request(
+        host, port, method, scheme, authority, path, http_version, headers, None, None, timestamp_start, None
+    )
+
+
+def read_response(rfile, request, body_size_limit=None):
+    response = read_response_head(rfile)
+    expected_body_size = expected_http_body_size(request, response)
+    response.data.content = b"".join(read_body(rfile, expected_body_size, body_size_limit))
+    response.timestamp_end = time.time()
+    return response
+
+
+def read_response_head(rfile):
+    """
+    Parse an HTTP response head (response line + headers) from an input stream
+
+    Args:
+        rfile: The input stream
+
+    Returns:
+        The HTTP request object (without body)
+
+    Raises:
+        exceptions.HttpReadDisconnect: No bytes can be read from rfile.
+        exceptions.HttpSyntaxException: The input is malformed HTTP.
+        exceptions.HttpException: Any other error occurred.
+    """
+
+    timestamp_start = time.time()
+    if hasattr(rfile, "reset_timestamps"):
+        rfile.reset_timestamps()
+
+    http_version, status_code, message = _read_response_line(rfile)
+    headers = _read_headers(rfile)
+
+    if hasattr(rfile, "first_byte_timestamp"):
+        # more accurate timestamp_start
+        timestamp_start = rfile.first_byte_timestamp
+
+    return response.Response(http_version, status_code, message, headers, None, None, timestamp_start, None)
+
+
+def read_body(rfile, expected_size, limit=None, max_chunk_size=4096):
+    """
+        Read an HTTP message body
+
+        Args:
+            rfile: The input stream
+            expected_size: The expected body size (see :py:meth:`expected_body_size`)
+            limit: Maximum body size
+            max_chunk_size: Maximium chunk size that gets yielded
+
+        Returns:
+            A generator that yields byte chunks of the content.
+
+        Raises:
+            exceptions.HttpException, if an error occurs
+
+        Caveats:
+            max_chunk_size is not considered if the transfer encoding is chunked.
+    """
+    if not limit or limit < 0:
+        limit = sys.maxsize
+    if not max_chunk_size:
+        max_chunk_size = limit
+
+    if expected_size is None:
+        yield from _read_chunked(rfile, limit)
+    elif expected_size >= 0:
+        if limit is not None and expected_size > limit:
+            raise exceptions.HttpException(
+                "HTTP Body too large. "
+                "Limit is {}, content length was advertised as {}".format(limit, expected_size)
+            )
+        bytes_left = expected_size
+        while bytes_left:
+            chunk_size = min(bytes_left, max_chunk_size)
+            content = rfile.read(chunk_size)
+            if len(content) < chunk_size:
+                raise exceptions.HttpException("Unexpected EOF")
+            yield content
+            bytes_left -= chunk_size
+    else:
+        bytes_left = limit
+        while bytes_left:
+            chunk_size = min(bytes_left, max_chunk_size)
+            content = rfile.read(chunk_size)
+            if not content:
+                return
+            yield content
+            bytes_left -= chunk_size
+        not_done = rfile.read(1)
+        if not_done:
+            raise exceptions.HttpException(f"HTTP body too large. Limit is {limit}.")
+
+
 def connection_close(http_version, headers):
     """
-    Checks the message to see if the client connection should be closed
-    according to RFC 2616 Section 8.1.
-    If we don't have a Connection header, HTTP 1.1 connections are assumed
-    to be persistent.
+        Checks the message to see if the client connection should be closed
+        according to RFC 2616 Section 8.1.
+        If we don't have a Connection header, HTTP 1.1 connections are assumed
+        to be persistent.
     """
     if "connection" in headers:
         tokens = get_header_tokens(headers, "connection")
@@ -36,139 +167,85 @@ def connection_close(http_version, headers):
         elif "keep-alive" in tokens:
             return False
 
-    return http_version not in (
-        "HTTP/1.1",
-        b"HTTP/1.1",
-        "HTTP/2.0",
-        b"HTTP/2.0",
-    )
+    return http_version != "HTTP/1.1" and http_version != b"HTTP/1.1"
 
 
 def expected_http_body_size(
-    request: Request, response: Response | None = None
-) -> int | None:
+        request: request.Request,
+        response: typing.Optional[response.Response] = None,
+        expect_continue_as_0: bool = True
+):
     """
-    Returns:
-        The expected body length:
-        - a positive integer, if the size is known in advance
-        - None, if the size in unknown in advance (chunked encoding)
-        - -1, if all data should be read until end of stream.
+        Args:
+            - expect_continue_as_0: If true, incorrectly predict a body size of 0 for requests which are waiting
+              for a 100 Continue response.
+        Returns:
+            The expected body length:
+            - a positive integer, if the size is known in advance
+            - None, if the size in unknown in advance (chunked encoding)
+            - -1, if all data should be read until end of stream.
 
-    Raises:
-        ValueError, if the content-length or transfer-encoding header is invalid
+        Raises:
+            exceptions.HttpSyntaxException, if the content length header is invalid
     """
-    # Determine response size according to http://tools.ietf.org/html/rfc7230#section-3.3, which is inlined below.
+    # Determine response size according to
+    # http://tools.ietf.org/html/rfc7230#section-3.3
     if not response:
         headers = request.headers
+        if expect_continue_as_0 and headers.get("expect", "").lower() == "100-continue":
+            return 0
     else:
         headers = response.headers
-
-        #    1.  Any response to a HEAD request and any response with a 1xx
-        #        (Informational), 204 (No Content), or 304 (Not Modified) status
-        #        code is always terminated by the first empty line after the
-        #        header fields, regardless of the header fields present in the
-        #        message, and thus cannot contain a message body.
         if request.method.upper() == "HEAD":
             return 0
         if 100 <= response.status_code <= 199:
             return 0
+        if response.status_code == 200 and request.method.upper() == "CONNECT":
+            return 0
         if response.status_code in (204, 304):
             return 0
 
-        #    2.  Any 2xx (Successful) response to a CONNECT request implies that
-        #        the connection will become a tunnel immediately after the empty
-        #        line that concludes the header fields.  A client MUST ignore any
-        #        Content-Length or Transfer-Encoding header fields received in
-        #        such a message.
-        if 200 <= response.status_code <= 299 and request.method.upper() == "CONNECT":
-            return 0
-
-    #    3.  If a Transfer-Encoding header field is present and the chunked
-    #        transfer coding (Section 4.1) is the final encoding, the message
-    #        body length is determined by reading and decoding the chunked
-    #        data until the transfer coding indicates the data is complete.
-    #
-    #        If a Transfer-Encoding header field is present in a response and
-    #        the chunked transfer coding is not the final encoding, the
-    #        message body length is determined by reading the connection until
-    #        it is closed by the server.  If a Transfer-Encoding header field
-    #        is present in a request and the chunked transfer coding is not
-    #        the final encoding, the message body length cannot be determined
-    #        reliably; the server MUST respond with the 400 (Bad Request)
-    #        status code and then close the connection.
-    #
-    #        If a message is received with both a Transfer-Encoding and a
-    #        Content-Length header field, the Transfer-Encoding overrides the
-    #        Content-Length.  Such a message might indicate an attempt to
-    #        perform request smuggling (Section 9.5) or response splitting
-    #        (Section 9.4) and ought to be handled as an error.  A sender MUST
-    #        remove the received Content-Length field prior to forwarding such
-    #        a message downstream.
-    #
-    if te_str := headers.get("transfer-encoding"):
-        te = validate.parse_transfer_encoding(te_str)
-        match te:
-            case "chunked" | "compress,chunked" | "deflate,chunked" | "gzip,chunked":
-                return None
-            case "compress" | "deflate" | "gzip" | "identity":
-                if response:
-                    return -1
-                # These values are valid for responses only (not requests), which is ensured in
-                # mitmproxy.net.http.validate. If users have explicitly disabled header validation,
-                # we strive for maximum compatibility with weird clients.
-                if te == "identity" or "content-length" in headers:
-                    pass  # Content-Length or 0
-                else:
-                    return (
-                        -1
-                    )  # compress/deflate/gzip with no content-length -> read until eof
-            case other:  # pragma: no cover
-                typing.assert_never(other)
-
-    #    4.  If a message is received without Transfer-Encoding and with
-    #        either multiple Content-Length header fields having differing
-    #        field-values or a single Content-Length header field having an
-    #        invalid value, then the message framing is invalid and the
-    #        recipient MUST treat it as an unrecoverable error.  If this is a
-    #        request message, the server MUST respond with a 400 (Bad Request)
-    #        status code and then close the connection.  If this is a response
-    #        message received by a proxy, the proxy MUST close the connection
-    #        to the server, discard the received response, and send a 502 (Bad
-    #        Gateway) response to the client.  If this is a response message
-    #        received by a user agent, the user agent MUST close the
-    #        connection to the server and discard the received response.
-    #
-    #    5.  If a valid Content-Length header field is present without
-    #        Transfer-Encoding, its decimal value defines the expected message
-    #        body length in octets.  If the sender closes the connection or
-    #        the recipient times out before the indicated number of octets are
-    #        received, the recipient MUST consider the message to be
-    #        incomplete and close the connection.
-    if cl := headers.get("content-length"):
-        return validate.parse_content_length(cl)
-    #    6.  If this is a request message and none of the above are true, then
-    #        the message body length is zero (no message body is present).
+    if "chunked" in headers.get("transfer-encoding", "").lower():
+        return None
+    if "content-length" in headers:
+        try:
+            sizes = headers.get_all("content-length")
+            different_content_length_headers = any(x != sizes[0] for x in sizes)
+            if different_content_length_headers:
+                raise exceptions.HttpSyntaxException("Conflicting Content Length Headers")
+            size = int(sizes[0])
+            if size < 0:
+                raise ValueError()
+            return size
+        except ValueError as e:
+            raise exceptions.HttpSyntaxException("Unparseable Content Length") from e
     if not response:
         return 0
-
-    #    7.  Otherwise, this is a response message without a declared message
-    #        body length, so the message body length is determined by the
-    #        number of octets received prior to the server closing the
-    #        connection.
     return -1
 
 
-def raise_if_http_version_unknown(http_version: bytes) -> None:
-    if not re.match(rb"^HTTP/\d\.\d$", http_version):
-        raise ValueError(f"Unknown HTTP version: {http_version!r}")
+def _get_first_line(rfile):
+    try:
+        line = rfile.readline()
+        if line == b"\r\n" or line == b"\n":
+            # Possible leftover from previous message
+            line = rfile.readline()
+    except (exceptions.TcpDisconnect, exceptions.TlsException):
+        raise exceptions.HttpReadDisconnect("Remote disconnected")
+    if not line:
+        raise exceptions.HttpReadDisconnect("Remote disconnected")
+    return line.strip()
 
 
-def _read_request_line(
-    line: bytes,
-) -> tuple[str, int, bytes, bytes, bytes, bytes, bytes]:
+def _read_request_line(rfile):
+    try:
+        line = _get_first_line(rfile)
+    except exceptions.HttpReadDisconnect:
+        # We want to provide a better error message.
+        raise exceptions.HttpReadDisconnect("Client disconnected")
+
     try:
         method, target, http_version = line.split()
-        port: int | None
 
         if target == b"*" or target.startswith(b"/"):
             scheme, authority, path = b"", b"", target
@@ -180,7 +257,7 @@ def _read_request_line(
                 raise ValueError
         else:
             scheme, rest = target.split(b"://", maxsplit=1)
-            authority, _, path_ = rest.partition(b"/")
+            authority, path_ = rest.split(b"/", maxsplit=1)
             path = b"/" + path_
             host, port = url.parse_authority(authority, check=True)
             port = port or url.default_port(scheme)
@@ -189,46 +266,62 @@ def _read_request_line(
             # TODO: we can probably get rid of this check?
             url.parse(target)
 
-        raise_if_http_version_unknown(http_version)
-    except ValueError as e:
-        raise ValueError(f"Bad HTTP request line: {line!r}") from e
+        _check_http_version(http_version)
+    except ValueError:
+        raise exceptions.HttpSyntaxException(f"Bad HTTP request line: {line}")
 
     return host, port, method, scheme, authority, path, http_version
 
 
-def _read_response_line(line: bytes) -> tuple[bytes, int, bytes]:
+def _read_response_line(rfile):
+    try:
+        line = _get_first_line(rfile)
+    except exceptions.HttpReadDisconnect:
+        # We want to provide a better error message.
+        raise exceptions.HttpReadDisconnect("Server disconnected")
+
     try:
         parts = line.split(None, 2)
         if len(parts) == 2:  # handle missing message gracefully
             parts.append(b"")
 
-        http_version, status_code_str, reason = parts
-        status_code = int(status_code_str)
-        raise_if_http_version_unknown(http_version)
-    except ValueError as e:
-        raise ValueError(f"Bad HTTP response line: {line!r}") from e
+        http_version, status_code, message = parts
+        status_code = int(status_code)
+        _check_http_version(http_version)
 
-    return http_version, status_code, reason
+    except ValueError:
+        raise exceptions.HttpSyntaxException(f"Bad HTTP response line: {line}")
+
+    return http_version, status_code, message
 
 
-def _read_headers(lines: Iterable[bytes]) -> Headers:
+def _check_http_version(http_version):
+    if not re.match(br"^HTTP/\d\.\d$", http_version):
+        raise exceptions.HttpSyntaxException(f"Unknown HTTP version: {http_version}")
+
+
+def _read_headers(rfile):
     """
-    Read a set of headers.
-    Stop once a blank line is reached.
+        Read a set of headers.
+        Stop once a blank line is reached.
 
-    Returns:
-        A headers object
+        Returns:
+            A headers object
 
-    Raises:
-        exceptions.HttpSyntaxException
+        Raises:
+            exceptions.HttpSyntaxException
     """
-    ret: list[tuple[bytes, bytes]] = []
-    for line in lines:
+    ret = []
+    while True:
+        line = rfile.readline()
+        if not line or line == b"\r\n" or line == b"\n":
+            # we do have coverage of this, but coverage.py does not detect it.
+            break  # pragma: no cover
         if line[0] in b" \t":
             if not ret:
-                raise ValueError("Invalid headers")
+                raise exceptions.HttpSyntaxException("Invalid headers")
             # continued header
-            ret[-1] = (ret[-1][0], ret[-1][1] + b"\r\n " + line.strip())
+            ret[-1] = (ret[-1][0], ret[-1][1] + b'\r\n ' + line.strip())
         else:
             try:
                 name, value = line.split(b":", 1)
@@ -237,67 +330,40 @@ def _read_headers(lines: Iterable[bytes]) -> Headers:
                     raise ValueError()
                 ret.append((name, value))
             except ValueError:
-                raise ValueError(f"Invalid header line: {line!r}")
-    return Headers(ret)
+                raise exceptions.HttpSyntaxException(
+                    "Invalid header line: %s" % repr(line)
+                )
+    return headers.Headers(ret)
 
 
-def read_request_head(lines: list[bytes]) -> Request:
+def _read_chunked(rfile, limit=sys.maxsize):
     """
-    Parse an HTTP request head (request line + headers) from an iterable of lines
+    Read a HTTP body with chunked transfer encoding.
 
     Args:
-        lines: The input lines
-
-    Returns:
-        The HTTP request object (without body)
-
-    Raises:
-        ValueError: The input is malformed.
+        rfile: the input file
+        limit: A positive integer
     """
-    host, port, method, scheme, authority, path, http_version = _read_request_line(
-        lines[0]
-    )
-    headers = _read_headers(lines[1:])
-
-    return Request(
-        host=host,
-        port=port,
-        method=method,
-        scheme=scheme,
-        authority=authority,
-        path=path,
-        http_version=http_version,
-        headers=headers,
-        content=None,
-        trailers=None,
-        timestamp_start=time.time(),
-        timestamp_end=None,
-    )
-
-
-def read_response_head(lines: list[bytes]) -> Response:
-    """
-    Parse an HTTP response head (response line + headers) from an iterable of lines
-
-    Args:
-        lines: The input lines
-
-    Returns:
-        The HTTP response object (without body)
-
-    Raises:
-        ValueError: The input is malformed.
-    """
-    http_version, status_code, reason = _read_response_line(lines[0])
-    headers = _read_headers(lines[1:])
-
-    return Response(
-        http_version=http_version,
-        status_code=status_code,
-        reason=reason,
-        headers=headers,
-        content=None,
-        trailers=None,
-        timestamp_start=time.time(),
-        timestamp_end=None,
-    )
+    total = 0
+    while True:
+        line = rfile.readline(128)
+        if line == b"":
+            raise exceptions.HttpException("Connection closed prematurely")
+        if line != b"\r\n" and line != b"\n":
+            try:
+                length = int(line, 16)
+            except ValueError:
+                raise exceptions.HttpSyntaxException(f"Invalid chunked encoding length: {line}")
+            total += length
+            if total > limit:
+                raise exceptions.HttpException(
+                    "HTTP Body too large. Limit is {}, "
+                    "chunked content longer than {}".format(limit, total)
+                )
+            chunk = rfile.read(length)
+            suffix = rfile.readline(5)
+            if suffix != b"\r\n":
+                raise exceptions.HttpSyntaxException("Malformed chunked body")
+            if length == 0:
+                return
+            yield chunk

@@ -1,7 +1,4 @@
-html,
-body,
-#container,
-#mitmproxy {
+html, body, #container, #mitmproxy {
     height: 100%;
     margin: 0;
     overflow: hidden;
@@ -13,9 +10,7 @@ body,
 
     outline: none; // our root element is focused by default.
 
-    > header,
-    > footer,
-    > .eventlog {
+    > header, > footer, > .eventlog {
         flex: 0 0 auto;
     }
 }
@@ -35,10 +30,10 @@ body,
         flex-direction: column;
     }
 
-    .flow-detail,
-    .flow-table {
+    .flow-detail, .flow-table {
         flex: 1 1 auto;
     }
+
 }
 
 .splitter {

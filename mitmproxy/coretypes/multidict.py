@@ -1,33 +1,23 @@
-from abc import ABCMeta
-from abc import abstractmethod
-from collections.abc import Iterator
-from collections.abc import MutableMapping
-from collections.abc import Sequence
-from typing import TypeVar
+from abc import ABCMeta, abstractmethod
 
+from collections.abc import MutableMapping
 from mitmproxy.coretypes import serializable
 
-KT = TypeVar("KT")
-VT = TypeVar("VT")
 
-
-class _MultiDict(MutableMapping[KT, VT], metaclass=ABCMeta):
-    """
-    A MultiDict is a dictionary-like data structure that supports multiple values per key.
-    """
-
-    fields: tuple[tuple[KT, VT], ...]
-    """The underlying raw datastructure."""
-
+class _MultiDict(MutableMapping, metaclass=ABCMeta):
     def __repr__(self):
-        fields = (repr(field) for field in self.fields)
+        fields = (
+            repr(field)
+            for field in self.fields
+        )
         return "{cls}[{fields}]".format(
-            cls=type(self).__name__, fields=", ".join(fields)
+            cls=type(self).__name__,
+            fields=", ".join(fields)
         )
 
     @staticmethod
     @abstractmethod
-    def _reduce_values(values: Sequence[VT]) -> VT:
+    def _reduce_values(values):
         """
         If a user accesses multidict["foo"], this method
         reduces all values for "foo" to a single value that is returned.
@@ -37,30 +27,31 @@ class _MultiDict(MutableMapping[KT, VT], metaclass=ABCMeta):
 
     @staticmethod
     @abstractmethod
-    def _kconv(key: KT) -> KT:
+    def _kconv(key):
         """
         This method converts a key to its canonical representation.
         For example, HTTP headers are case-insensitive, so this method returns key.lower().
         """
 
-    def __getitem__(self, key: KT) -> VT:
+    def __getitem__(self, key):
         values = self.get_all(key)
         if not values:
             raise KeyError(key)
         return self._reduce_values(values)
 
-    def __setitem__(self, key: KT, value: VT) -> None:
+    def __setitem__(self, key, value):
         self.set_all(key, [value])
 
-    def __delitem__(self, key: KT) -> None:
+    def __delitem__(self, key):
         if key not in self:
             raise KeyError(key)
         key = self._kconv(key)
         self.fields = tuple(
-            field for field in self.fields if key != self._kconv(field[0])
+            field for field in self.fields
+            if key != self._kconv(field[0])
         )
 
-    def __iter__(self) -> Iterator[KT]:
+    def __iter__(self):
         seen = set()
         for key, _ in self.fields:
             key_kconv = self._kconv(key)
@@ -68,76 +59,96 @@ class _MultiDict(MutableMapping[KT, VT], metaclass=ABCMeta):
                 seen.add(key_kconv)
                 yield key
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len({self._kconv(key) for key, _ in self.fields})
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other):
         if isinstance(other, MultiDict):
             return self.fields == other.fields
         return False
 
-    def get_all(self, key: KT) -> list[VT]:
+    def get_all(self, key):
         """
         Return the list of all values for a given key.
         If that key is not in the MultiDict, the return value will be an empty list.
         """
         key = self._kconv(key)
-        return [value for k, value in self.fields if self._kconv(k) == key]
+        return [
+            value
+            for k, value in self.fields
+            if self._kconv(k) == key
+        ]
 
-    def set_all(self, key: KT, values: list[VT]) -> None:
+    def set_all(self, key, values):
         """
         Remove the old values for a key and add new ones.
         """
         key_kconv = self._kconv(key)
 
-        new_fields: list[tuple[KT, VT]] = []
+        new_fields = []
         for field in self.fields:
             if self._kconv(field[0]) == key_kconv:
                 if values:
-                    new_fields.append((field[0], values.pop(0)))
+                    new_fields.append(
+                        (field[0], values.pop(0))
+                    )
             else:
                 new_fields.append(field)
         while values:
-            new_fields.append((key, values.pop(0)))
+            new_fields.append(
+                (key, values.pop(0))
+            )
         self.fields = tuple(new_fields)
 
-    def add(self, key: KT, value: VT) -> None:
+    def add(self, key, value):
         """
         Add an additional value for the given key at the bottom.
         """
         self.insert(len(self.fields), key, value)
 
-    def insert(self, index: int, key: KT, value: VT) -> None:
+    def insert(self, index, key, value):
         """
         Insert an additional value for the given key at the specified position.
         """
         item = (key, value)
         self.fields = self.fields[:index] + (item,) + self.fields[index:]
 
-    def keys(self, multi: bool = False):
+    def keys(self, multi=False):
         """
         Get all keys.
 
-        If `multi` is True, one key per value will be returned.
-        If `multi` is False, duplicate keys will only be returned once.
+        Args:
+            multi(bool):
+                If True, one key per value will be returned.
+                If False, duplicate keys will only be returned once.
         """
-        return (k for k, _ in self.items(multi))
+        return (
+            k
+            for k, _ in self.items(multi)
+        )
 
-    def values(self, multi: bool = False):
+    def values(self, multi=False):
         """
         Get all values.
 
-        If `multi` is True, all values will be returned.
-        If `multi` is False, only the first value per key will be returned.
+        Args:
+            multi(bool):
+                If True, all values will be returned.
+                If False, only the first value per key will be returned.
         """
-        return (v for _, v in self.items(multi))
+        return (
+            v
+            for _, v in self.items(multi)
+        )
 
-    def items(self, multi: bool = False):
+    def items(self, multi=False):
         """
         Get all (key, value) tuples.
 
-        If `multi` is True, all `(key, value)` pairs will be returned.
-        If False, only one tuple per key is returned.
+        Args:
+            multi(bool):
+                If True, all (key, value) pairs will be returned
+                If False, only the first (key, value) pair per unique key will be returned.
         """
         if multi:
             return self.fields
@@ -145,12 +156,12 @@ class _MultiDict(MutableMapping[KT, VT], metaclass=ABCMeta):
             return super().items()
 
 
-class MultiDict(_MultiDict[KT, VT], serializable.Serializable):
-    """A concrete MultiDict, storing its own data."""
-
+class MultiDict(_MultiDict, serializable.Serializable):
     def __init__(self, fields=()):
         super().__init__()
-        self.fields = tuple(tuple(i) for i in fields)  # type: ignore
+        self.fields = tuple(
+            tuple(i) for i in fields
+        )
 
     @staticmethod
     def _reduce_values(values):
@@ -164,20 +175,19 @@ class MultiDict(_MultiDict[KT, VT], serializable.Serializable):
         return self.fields
 
     def set_state(self, state):
-        self.fields = tuple(tuple(x) for x in state)  # type: ignore
+        self.fields = tuple(tuple(x) for x in state)
 
     @classmethod
     def from_state(cls, state):
         return cls(state)
 
 
-class MultiDictView(_MultiDict[KT, VT]):
+class MultiDictView(_MultiDict):
     """
     The MultiDictView provides the MultiDict interface over calculated data.
     The view itself contains no state - data is retrieved from the parent on
     request, and stored back to the parent on change.
     """
-
     def __init__(self, getter, setter):
         self._getter = getter
         self._setter = setter
@@ -194,7 +204,7 @@ class MultiDictView(_MultiDict[KT, VT]):
         # multiple elements exist with the same key.
         return values[0]
 
-    @property  # type: ignore
+    @property
     def fields(self):
         return self._getter()
 
@@ -202,5 +212,5 @@ class MultiDictView(_MultiDict[KT, VT]):
     def fields(self, value):
         self._setter(value)
 
-    def copy(self) -> "MultiDict[KT,VT]":
+    def copy(self):
         return MultiDict(self.fields)

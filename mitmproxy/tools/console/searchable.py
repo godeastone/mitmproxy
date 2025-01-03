@@ -4,6 +4,7 @@ from mitmproxy.tools.console import signals
 
 
 class Highlight(urwid.AttrMap):
+
     def __init__(self, t):
         urwid.AttrMap.__init__(
             self,
@@ -14,6 +15,7 @@ class Highlight(urwid.AttrMap):
 
 
 class Searchable(urwid.ListBox):
+
     def __init__(self, contents):
         self.walker = urwid.SimpleFocusListWalker(contents)
         urwid.ListBox.__init__(self, self.walker)
@@ -22,10 +24,12 @@ class Searchable(urwid.ListBox):
         self.search_term = None
         self.last_search = None
 
-    def keypress(self, size, key: str):
+    def keypress(self, size, key):
         if key == "/":
             signals.status_prompt.send(
-                prompt="Search for", text="", callback=self.set_search
+                prompt = "Search for",
+                text = "",
+                callback = self.set_search
             )
         elif key == "n":
             self.find_next(False)
@@ -63,7 +67,7 @@ class Searchable(urwid.ListBox):
         else:
             return None
 
-    def find_next(self, backwards: bool):
+    def find_next(self, backwards):
         if not self.search_term:
             if self.last_search:
                 self.search_term = self.last_search

@@ -1,26 +1,25 @@
 import asyncio
-import contextlib
+import mailcap
 import mimetypes
+import os
 import os.path
 import shlex
-import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import typing  # noqa
+import contextlib
 import threading
-from typing import TypeVar
 
 import urwid
-from tornado.platform.asyncio import AddThreadSelectorEventLoop
 
 from mitmproxy import addons
-from mitmproxy import log
 from mitmproxy import master
-from mitmproxy import options
-from mitmproxy.addons import errorcheck
-from mitmproxy.addons import eventstore
+from mitmproxy import log
 from mitmproxy.addons import intercept
+from mitmproxy.addons import eventstore
 from mitmproxy.addons import readfile
 from mitmproxy.addons import view
 from mitmproxy.tools.console import consoleaddons
@@ -29,14 +28,14 @@ from mitmproxy.tools.console import keymap
 from mitmproxy.tools.console import palettes
 from mitmproxy.tools.console import signals
 from mitmproxy.tools.console import window
-from mitmproxy.utils import strutils
-
-T = TypeVar("T", str, bytes)
 
 
 class ConsoleMaster(master.Master):
-    def __init__(self, opts: options.Options) -> None:
+
+    def __init__(self, opts):
         super().__init__(opts)
+
+        self.start_err: typing.Optional[log.LogEntry] = None
 
         self.view: view.View = view.View()
         self.events = eventstore.EventStore()
@@ -47,54 +46,63 @@ class ConsoleMaster(master.Master):
         defaultkeys.map(self.keymap)
         self.options.errored.connect(self.options_error)
 
+        self.view_stack = []
+
+        signals.call_in.connect(self.sig_call_in)
         self.addons.add(*addons.default_addons())
         self.addons.add(
             intercept.Intercept(),
             self.view,
             self.events,
+            consoleaddons.UnsupportedLog(),
             readfile.ReadFile(),
             consoleaddons.ConsoleAddon(self),
-            keymap.KeymapConfig(self),
-            errorcheck.ErrorCheck(repeat_errors_on_stderr=True),
+            keymap.KeymapConfig(),
         )
 
-        self.window: window.Window | None = None
+        def sigint_handler(*args, **kwargs):
+            self.prompt_for_exit()
+
+        signal.signal(signal.SIGINT, sigint_handler)
+
+        self.window = None
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
-        signals.update_settings.send()
+        signals.update_settings.send(self)
 
-    def options_error(self, exc) -> None:
-        signals.status_message.send(message=str(exc), expire=1)
-
-    def prompt_for_exit(self) -> None:
-        signals.status_prompt_onekey.send(
-            prompt="Quit",
-            keys=[
-                ("yes", "y"),
-                ("no", "n"),
-            ],
-            callback=self.quit,
+    def options_error(self, opts, exc):
+        signals.status_message.send(
+            message=str(exc),
+            expire=1
         )
 
-    def sig_add_log(self, entry: log.LogEntry):
-        if log.log_tier(self.options.console_eventlog_verbosity) < log.log_tier(
-            entry.level
-        ):
+    def prompt_for_exit(self):
+        signals.status_prompt_onekey.send(
+            self,
+            prompt = "Quit",
+            keys = (
+                ("yes", "y"),
+                ("no", "n"),
+            ),
+            callback = self.quit,
+        )
+
+    def sig_add_log(self, event_store, entry: log.LogEntry):
+        if log.log_tier(self.options.console_eventlog_verbosity) < log.log_tier(entry.level):
             return
         if entry.level in ("error", "warn", "alert"):
             signals.status_message.send(
-                message=(
+                message = (
                     entry.level,
-                    f"{entry.level.title()}: {str(entry.msg).lstrip()}",
+                    "{}: {}".format(entry.level.title(), str(entry.msg).lstrip())
                 ),
-                expire=5,
+                expire=5
             )
 
-    def sig_call_in(self, seconds, callback):
+    def sig_call_in(self, sender, seconds, callback, args=()):
         def cb(*_):
-            return callback()
-
+            return callback(*args)
         self.loop.set_alarm_in(seconds, cb)
 
     @contextlib.contextmanager
@@ -107,44 +115,22 @@ class ConsoleMaster(master.Master):
             self.loop.screen_size = None
             self.loop.draw_screen()
 
-    def get_editor(self) -> str:
-        # based upon https://github.com/pallets/click/blob/main/src/click/_termui_impl.py
-        if m := os.environ.get("MITMPROXY_EDITOR"):
-            return m
-        if m := os.environ.get("EDITOR"):
-            return m
-        for editor in "sensible-editor", "nano", "vim":
-            if shutil.which(editor):
-                return editor
-        if os.name == "nt":
-            return "notepad"
-        else:
-            return "vi"
-
-    def get_hex_editor(self) -> str:
-        editors = ["ghex", "bless", "hexedit", "hxd", "hexer", "hexcurse"]
-        for editor in editors:
-            if shutil.which(editor):
-                return editor
-        return self.get_editor()
-
-    def spawn_editor(self, data: T) -> T:
-        text = isinstance(data, str)
-        fd, name = tempfile.mkstemp("", "mitmproxy", text=text)
-        with_hexeditor = isinstance(data, bytes) and strutils.is_mostly_bin(data)
+    def spawn_editor(self, data):
+        text = not isinstance(data, bytes)
+        fd, name = tempfile.mkstemp('', "mproxy", text=text)
         with open(fd, "w" if text else "wb") as f:
             f.write(data)
-        if with_hexeditor:
-            c = self.get_hex_editor()
-        else:
-            c = self.get_editor()
+        # if no EDITOR is set, assume 'vi'
+        c = os.environ.get("MITMPROXY_EDITOR") or os.environ.get("EDITOR") or "vi"
         cmd = shlex.split(c)
         cmd.append(name)
         with self.uistopped():
             try:
                 subprocess.call(cmd)
-            except Exception:
-                signals.status_message.send(message="Can't start editor: %s" % c)
+            except:
+                signals.status_message.send(
+                    message="Can't start editor: %s" % c
+                )
             else:
                 with open(name, "r" if text else "rb") as f:
                     data = f.read()
@@ -164,21 +150,25 @@ class ConsoleMaster(master.Master):
         # read-only to remind the user that this is a view function
         os.chmod(name, stat.S_IREAD)
 
-        # hm which one should get priority?
-        c = (
-            os.environ.get("MITMPROXY_EDITOR")
-            or os.environ.get("PAGER")
-            or os.environ.get("EDITOR")
-        )
-        if not c:
-            c = "less"
-        cmd = shlex.split(c)
-        cmd.append(name)
+        cmd = None
+        shell = False
 
+        if contenttype:
+            c = mailcap.getcaps()
+            cmd, _ = mailcap.findmatch(c, contenttype, filename=name)
+            if cmd:
+                shell = True
+        if not cmd:
+            # hm which one should get priority?
+            c = os.environ.get("MITMPROXY_EDITOR") or os.environ.get("PAGER") or os.environ.get("EDITOR")
+            if not c:
+                c = "less"
+            cmd = shlex.split(c)
+            cmd.append(name)
         with self.uistopped():
             try:
-                subprocess.call(cmd, shell=False)
-            except Exception:
+                subprocess.call(cmd, shell=shell)
+            except:
                 signals.status_message.send(
                     message="Can't start external viewer: %s" % " ".join(c)
                 )
@@ -186,10 +176,10 @@ class ConsoleMaster(master.Master):
         t = threading.Timer(1.0, os.unlink, args=[name])
         t.start()
 
-    def set_palette(self, *_) -> None:
+    def set_palette(self, opts, updated):
         self.ui.register_palette(
-            palettes.palettes[self.options.console_palette].palette(
-                self.options.console_palette_transparent
+            palettes.palettes[opts.console_palette].palette(
+                opts.console_palette_transparent
             )
         )
         self.ui.clear()
@@ -197,62 +187,41 @@ class ConsoleMaster(master.Master):
     def inject_key(self, key):
         self.loop.process_input([key])
 
-    async def running(self) -> None:
+    def run(self):
         if not sys.stdout.isatty():
-            print(
-                "Error: mitmproxy's console interface requires a tty. "
-                "Please run mitmproxy in an interactive shell environment.",
-                file=sys.stderr,
-            )
+            print("Error: mitmproxy's console interface requires a tty. "
+                  "Please run mitmproxy in an interactive shell environment.", file=sys.stderr)
             sys.exit(1)
 
-        detected_encoding = urwid.detected_encoding.lower()
-        if os.name != "nt" and detected_encoding and "utf" not in detected_encoding:
-            print(
-                f"mitmproxy expects a UTF-8 console environment, not {urwid.detected_encoding!r}. "
-                f"Set your LANG environment variable to something like en_US.UTF-8.",
-                file=sys.stderr,
-            )
-            # Experimental (04/2022): We just don't exit here and see if/how that affects users.
-            # sys.exit(1)
-        urwid.set_encoding("utf8")
-
-        signals.call_in.connect(self.sig_call_in)
         self.ui = window.Screen()
         self.ui.set_terminal_properties(256)
-        self.set_palette(None)
+        self.set_palette(self.options, None)
         self.options.subscribe(
-            self.set_palette, ["console_palette", "console_palette_transparent"]
+            self.set_palette,
+            ["console_palette", "console_palette_transparent"]
         )
-
-        loop = asyncio.get_running_loop()
-        if isinstance(loop, getattr(asyncio, "ProactorEventLoop", tuple())):
-            # fix for https://bugs.python.org/issue37373
-            loop = AddThreadSelectorEventLoop(loop)  # type: ignore
         self.loop = urwid.MainLoop(
             urwid.SolidFill("x"),
-            event_loop=urwid.AsyncioEventLoop(loop=loop),
-            screen=self.ui,
-            handle_mouse=self.options.console_mouse,
+            event_loop=urwid.AsyncioEventLoop(loop=asyncio.get_event_loop()),
+            screen = self.ui,
+            handle_mouse = self.options.console_mouse,
         )
         self.window = window.Window(self)
         self.loop.widget = self.window
         self.window.refresh()
 
-        self.loop.start()
+        if self.start_err:
+            def display_err(*_):
+                self.sig_add_log(None, self.start_err)
+                self.start_err = None
+            self.loop.set_alarm_in(0.01, display_err)
 
-        await super().running()
-
-    async def done(self):
-        self.loop.stop()
-        await super().done()
+        super().run_loop(self.loop.run)
 
     def overlay(self, widget, **kwargs):
-        assert self.window
         self.window.set_overlay(widget, **kwargs)
 
     def switch_view(self, name):
-        assert self.window
         self.window.push(name)
 
     def quit(self, a):

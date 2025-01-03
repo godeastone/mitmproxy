@@ -1,5 +1,4 @@
-import logging
-
+from mitmproxy import ctx
 
 def modify(chunks):
     for chunk in chunks:
@@ -7,7 +6,7 @@ def modify(chunks):
 
 
 def running():
-    logging.info("stream_modify running")
+    ctx.log.info("stream_modify running")
 
 
 def responseheaders(flow):

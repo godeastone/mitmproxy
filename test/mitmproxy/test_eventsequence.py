@@ -1,100 +1,57 @@
 import pytest
 
 from mitmproxy import eventsequence
-from mitmproxy.proxy import layers
 from mitmproxy.test import tflow
 
 
-@pytest.mark.parametrize(
-    "resp, err",
-    [
-        (False, False),
-        (True, False),
-        (False, True),
-        (True, True),
-    ],
-)
+@pytest.mark.parametrize("resp, err", [
+    (False, False),
+    (True, False),
+    (False, True),
+    (True, True),
+])
 def test_http_flow(resp, err):
     f = tflow.tflow(resp=resp, err=err)
     i = eventsequence.iterate(f)
-    assert isinstance(next(i), layers.http.HttpRequestHeadersHook)
-    assert isinstance(next(i), layers.http.HttpRequestHook)
+    assert next(i) == ("requestheaders", f)
+    assert next(i) == ("request", f)
     if resp:
-        assert isinstance(next(i), layers.http.HttpResponseHeadersHook)
-        assert isinstance(next(i), layers.http.HttpResponseHook)
+        assert next(i) == ("responseheaders", f)
+        assert next(i) == ("response", f)
     if err:
-        assert isinstance(next(i), layers.http.HttpErrorHook)
+        assert next(i) == ("error", f)
 
 
-def test_websocket_flow():
-    f = tflow.twebsocketflow()
+@pytest.mark.parametrize("err", [False, True])
+def test_websocket_flow(err):
+    f = tflow.twebsocketflow(err=err)
     i = eventsequence.iterate(f)
-
-    assert isinstance(next(i), layers.http.HttpRequestHeadersHook)
-    assert isinstance(next(i), layers.http.HttpRequestHook)
-    assert isinstance(next(i), layers.http.HttpResponseHeadersHook)
-    assert isinstance(next(i), layers.http.HttpResponseHook)
-
-    assert isinstance(next(i), layers.websocket.WebsocketStartHook)
-    assert len(f.websocket.messages) == 0
-    assert isinstance(next(i), layers.websocket.WebsocketMessageHook)
-    assert len(f.websocket.messages) == 1
-    assert isinstance(next(i), layers.websocket.WebsocketMessageHook)
-    assert len(f.websocket.messages) == 2
-    assert isinstance(next(i), layers.websocket.WebsocketMessageHook)
-    assert len(f.websocket.messages) == 3
-    assert isinstance(next(i), layers.websocket.WebsocketEndHook)
+    assert next(i) == ("websocket_start", f)
+    assert len(f.messages) == 0
+    assert next(i) == ("websocket_message", f)
+    assert len(f.messages) == 1
+    assert next(i) == ("websocket_message", f)
+    assert len(f.messages) == 2
+    assert next(i) == ("websocket_message", f)
+    assert len(f.messages) == 3
+    if err:
+        assert next(i) == ("websocket_error", f)
+    assert next(i) == ("websocket_end", f)
 
 
 @pytest.mark.parametrize("err", [False, True])
 def test_tcp_flow(err):
     f = tflow.ttcpflow(err=err)
     i = eventsequence.iterate(f)
-    assert isinstance(next(i), layers.tcp.TcpStartHook)
+    assert next(i) == ("tcp_start", f)
     assert len(f.messages) == 0
-    assert isinstance(next(i), layers.tcp.TcpMessageHook)
+    assert next(i) == ("tcp_message", f)
     assert len(f.messages) == 1
-    assert isinstance(next(i), layers.tcp.TcpMessageHook)
+    assert next(i) == ("tcp_message", f)
     assert len(f.messages) == 2
     if err:
-        assert isinstance(next(i), layers.tcp.TcpErrorHook)
-    else:
-        assert isinstance(next(i), layers.tcp.TcpEndHook)
-
-
-@pytest.mark.parametrize("err", [False, True])
-def test_udp_flow(err):
-    f = tflow.tudpflow(err=err)
-    i = eventsequence.iterate(f)
-    assert isinstance(next(i), layers.udp.UdpStartHook)
-    assert len(f.messages) == 0
-    assert isinstance(next(i), layers.udp.UdpMessageHook)
-    assert len(f.messages) == 1
-    assert isinstance(next(i), layers.udp.UdpMessageHook)
-    assert len(f.messages) == 2
-    if err:
-        assert isinstance(next(i), layers.udp.UdpErrorHook)
-    else:
-        assert isinstance(next(i), layers.udp.UdpEndHook)
-
-
-@pytest.mark.parametrize(
-    "resp, err",
-    [
-        (False, False),
-        (True, False),
-        (False, True),
-        (True, True),
-    ],
-)
-def test_dns(resp, err):
-    f = tflow.tdnsflow(resp=resp, err=err)
-    i = eventsequence.iterate(f)
-    assert isinstance(next(i), layers.dns.DnsRequestHook)
-    if resp:
-        assert isinstance(next(i), layers.dns.DnsResponseHook)
-    if err:
-        assert isinstance(next(i), layers.dns.DnsErrorHook)
+        assert next(i) == ("tcp_error", f)
+    assert next(i) == ("tcp_end", f)
 
 
 def test_invalid():

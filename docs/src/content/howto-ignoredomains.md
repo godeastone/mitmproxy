@@ -15,11 +15,14 @@ mitmproxy's interception mechanism:
   and mitmproxy's interception leads to errors. For example, the Twitter app,
   Windows Update or the Apple App Store fail to work if mitmproxy is active.
 - **Convenience:** You really don't care about some parts of the traffic and
-  just want them to go away. Note that mitmproxy's [view_filter]({{< relref "concepts-options/#view_filter" >}}) option is often the better alternative here, as it is not affected by the limitations listed below.
+  just want them to go away. Note that mitmproxy's "Limit" option is often the
+  better alternative here, as it is not affected by the limitations listed
+  below.
 
 If you want to peek into (SSL-protected) non-HTTP connections, check out the
 **tcp_proxy** feature. If you want to ignore traffic from mitmproxy's processing
 because of large response bodies, take a look at the [streaming]({{< relref "overview-features#streaming" >}}) feature.
+
 
 ## ignore_hosts
 
@@ -32,6 +35,7 @@ are excluded from interception, and passed on unmodified.
 | command-line alias | `--ignore-hosts regex`                                             |
 | mitmproxy option   | `ignore_hosts` |
 
+
 ## Limitations
 
 There are two important quirks to consider:
@@ -42,7 +46,7 @@ There are two important quirks to consider:
   information before the SSL handshake. If the client uses SNI however, then we
   treat the SNI host as an ignore target.
 - **In regular and upstream proxy mode, explicit HTTP requests are never
-  ignored.**[^1] The ignore pattern is applied on CONNECT requests, which
+  ignored.**\[1\] The ignore pattern is applied on CONNECT requests, which
   initiate HTTPS or clear-text WebSocket connections.
 
 ## Tutorial
@@ -50,23 +54,22 @@ There are two important quirks to consider:
 If you just want to ignore one specific domain, there's usually a bulletproof
 method to do so:
 
-1. Run mitmproxy or mitmdump and observe the `host:port`
-   information following the `server connect` messages in the event log.
-   mitmproxy will filter on these.
+1. Run mitmproxy or mitmdump in verbose mode (`-v`) and observe the `host:port`
+    information in the serverconnect messages. mitmproxy will filter on these.
 2. Take the `host:port` string, surround it with ^ and $, escape all dots (.
     becomes \\.) and use this as your ignore pattern:
 
+
 ```
->>> mitmdump
-Proxy server listening at http://*:8080
-127.0.0.1:57089: client connect
-127.0.0.1:57089: server connect example.com:443 (93.184.216.34:443)
-127.0.0.1:57089: GET https://example.com/ HTTP/2.0
-     << HTTP/2.0 200 OK 1.23k
-127.0.0.1:57089: client disconnect
-127.0.0.1:57089: server disconnect example.com:443 (93.184.216.34:443)
+>>> mitmdump -v
+127.0.0.1:50588: clientconnect
+127.0.0.1:50588: request
+  -> CONNECT example.com:443 HTTP/1.1
+127.0.0.1:50588: Set new server address: example.com:443
+127.0.0.1:50588: serverconnect
+  -> example.com:443
 ^C
->>> mitmproxy --ignore-hosts '^example\.com:443$'
+>>> mitmproxy --ignore-hosts ^example\.com:443$
 ```
 
 Here are some other examples for ignore patterns:
@@ -86,11 +89,23 @@ Here are some other examples for ignore patterns:
 --ignore-hosts 17\.178\.\d+\.\d+:443
 ```
 
-If you want to capture some specific domains only, you can use the `--allow-hosts` option, which makes mitmproxy
-ignore all other traffic.
+This option can also be used to only allow some specific domains through negative lookahead expressions. However, ignore
+patterns are always matched against the IP address of the target before being matched against its domain name. Thus, the
+pattern must allow any IP addresses using an expression like `^(?![0-9\.]+:)` in order for this to work.
+Here are examples of such patterns:
 
-[^1]: This stems from an limitation of explicit HTTP proxying: A single connection
-      can be re-used for multiple target domains - a `GET http://example.com/`
-      request may be followed by a `GET http://evil.com/` request on the same
-      connection. If we start to ignore the connection after the first request, we
-      would miss the relevant second one.
+```
+# Ignore everything but example.com and mitmproxy.org (not subdomains):
+--ignore-hosts '^(?![0-9\.]+:)(?!example\.com:)(?!mitmproxy\.org:)'
+
+# Ignore everything but example.com and its subdomains:
+--ignore-hosts '^(?![0-9\.]+:)(?!([^\.:]+\.)*example\.com:)'
+```
+
+**Footnotes**
+
+1. This stems from an limitation of explicit HTTP proxying: A single connection
+    can be re-used for multiple target domains - a `GET http://example.com/`
+    request may be followed by a `GET http://evil.com/` request on the same
+    connection. If we start to ignore the connection after the first request, we
+    would miss the relevant second one.

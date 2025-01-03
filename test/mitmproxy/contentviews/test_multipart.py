@@ -1,6 +1,6 @@
-from . import full_eval
 from mitmproxy.contentviews import multipart
-from mitmproxy.test import tutils
+from mitmproxy.net import http
+from . import full_eval
 
 
 def test_view_multipart():
@@ -12,24 +12,14 @@ Content-Disposition: form-data; name="submit-name"
 Larry
 --AaB03x
         """.strip()
-    assert view(v, content_type="multipart/form-data; boundary=AaB03x")
+    h = http.Headers(content_type="multipart/form-data; boundary=AaB03x")
+    assert view(v, headers=h)
 
-    req = tutils.treq()
-    req.headers["content-type"] = "multipart/form-data; boundary=AaB03x"
-    req.content = v
+    h = http.Headers()
+    assert not view(v, headers=h)
 
-    assert view(
-        v, content_type="multipart/form-data; boundary=AaB03x", http_message=req
-    )
+    h = http.Headers(content_type="multipart/form-data")
+    assert not view(v, headers=h)
 
-    assert not view(v)
-
-    assert not view(v, content_type="multipart/form-data")
-
-    assert not view(v, content_type="unparseable")
-
-
-def test_render_priority():
-    v = multipart.ViewMultipart()
-    assert v.render_priority(b"data", content_type="multipart/form-data")
-    assert not v.render_priority(b"data", content_type="text/plain")
+    h = http.Headers(content_type="unparseable")
+    assert not view(v, headers=h)

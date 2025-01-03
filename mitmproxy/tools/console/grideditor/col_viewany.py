@@ -2,10 +2,9 @@
 A display-only column that displays any data type.
 """
 
-from typing import Any
+import typing
 
 import urwid
-
 from mitmproxy.tools.console.grideditor import base
 from mitmproxy.utils import strutils
 
@@ -21,7 +20,7 @@ class Column(base.Column):
 
 
 class Display(base.Cell):
-    def __init__(self, data: Any) -> None:
+    def __init__(self, data: typing.Any) -> None:
         self.data = data
         if isinstance(data, bytes):
             data = strutils.bytes_to_escaped_str(data)
@@ -30,5 +29,5 @@ class Display(base.Cell):
         w = urwid.Text(data, wrap="any")
         super().__init__(w)
 
-    def get_data(self) -> Any:
+    def get_data(self) -> typing.Any:
         return self.data
